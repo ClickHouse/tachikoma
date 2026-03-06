@@ -58,7 +58,7 @@ pub struct Config {
 impl Config {
     pub fn from_partial(p: PartialConfig) -> crate::Result<Config> {
         Ok(Config {
-            base_image: p.base_image.unwrap_or_else(|| "tachikoma-base".to_string()),
+            base_image: p.base_image.unwrap_or_else(|| "ubuntu".to_string()),
             vm_cpus: p.vm_cpus.unwrap_or(4),
             vm_memory: p.vm_memory.unwrap_or(8192),
             vm_display: p.vm_display.unwrap_or_else(|| "none".to_string()),
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn test_from_partial_all_defaults() {
         let config = Config::from_partial(PartialConfig::default()).unwrap();
-        assert_eq!(config.base_image, "tachikoma-base");
+        assert_eq!(config.base_image, "ubuntu");
         assert_eq!(config.vm_cpus, 4);
         assert_eq!(config.vm_memory, 8192);
         assert_eq!(config.vm_display, "none");
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_default_config_values() {
         let defaults = super::super::defaults::default_config();
-        assert_eq!(defaults.base_image.unwrap(), "tachikoma-base");
+        assert_eq!(defaults.base_image.unwrap(), "ubuntu");
         assert_eq!(defaults.vm_cpus.unwrap(), 4);
         assert_eq!(defaults.vm_memory.unwrap(), 8192);
         assert_eq!(defaults.vm_display.unwrap(), "none");

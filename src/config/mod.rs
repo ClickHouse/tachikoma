@@ -101,7 +101,7 @@ mod tests {
         // With no config files, should return defaults
         let loader = FileConfigLoader::new();
         let config = loader.load(None).await.unwrap();
-        assert_eq!(config.base_image, "tachikoma-base");
+        assert_eq!(config.base_image, "ubuntu");
         assert_eq!(config.vm_cpus, 4);
         assert_eq!(config.ssh_user, "admin");
     }

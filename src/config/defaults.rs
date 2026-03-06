@@ -2,7 +2,7 @@ use super::schema::PartialConfig;
 
 pub fn default_config() -> PartialConfig {
     PartialConfig {
-        base_image: Some("tachikoma-base".to_string()),
+        base_image: Some("ubuntu".to_string()),
         vm_cpus: Some(4),
         vm_memory: Some(8192),
         vm_display: Some("none".to_string()),

@@ -2,20 +2,26 @@ use crate::state::{StateStore, VmStatus};
 use crate::tart::TartRunner;
 use crate::Result;
 
+/// Suspend a VM. Currently always uses stop because tart suspend silently
+/// breaks Linux VMs (exits 0 but creates an unresumable state).
+/// TODO: Re-enable true suspend when targeting macOS VMs only.
 pub async fn run(
     vm_name: &str,
     tart: &dyn TartRunner,
     state_store: &dyn StateStore,
-) -> Result<()> {
-    tart.suspend(vm_name).await?;
+) -> Result<VmStatus> {
+    // Always use stop — tart suspend on Linux VMs exits 0 but creates
+    // a broken "suspended" state that cannot be resumed.
+    tart.stop(vm_name).await?;
+    let status = VmStatus::Stopped;
 
     let mut state = state_store.load().await?;
     if let Some(entry) = state.find_vm_mut(vm_name) {
-        entry.status = VmStatus::Suspended;
+        entry.status = status.clone();
     }
     state_store.save(&state).await?;
 
-    Ok(())
+    Ok(status)
 }
 
 #[cfg(test)]
@@ -26,13 +32,8 @@ mod tests {
     use chrono::Utc;
     use std::path::PathBuf;
 
-    #[tokio::test]
-    async fn test_suspend_vm() {
-        let mut tart = MockTartRunner::new();
-        tart.expect_suspend().returning(|_| Ok(()));
-
-        let mut state = State::new();
-        state.add_vm(VmEntry {
+    fn test_vm_entry() -> VmEntry {
+        VmEntry {
             name: "test-vm".to_string(),
             repo: "repo".to_string(),
             branch: "main".to_string(),
@@ -41,16 +42,25 @@ mod tests {
             last_used: Utc::now(),
             status: VmStatus::Running,
             ip: Some("192.168.64.10".to_string()),
-        });
+        }
+    }
+
+    #[tokio::test]
+    async fn test_suspend_uses_stop() {
+        let mut tart = MockTartRunner::new();
+        tart.expect_stop().returning(|_| Ok(()));
+
+        let mut state = State::new();
+        state.add_vm(test_vm_entry());
 
         let mut store = MockStateStore::new();
         store.expect_load().returning(move || Ok(state.clone()));
         store
             .expect_save()
-            .withf(|s: &State| s.vms[0].status == VmStatus::Suspended)
+            .withf(|s: &State| s.vms[0].status == VmStatus::Stopped)
             .returning(|_| Ok(()));
 
-        let result = run("test-vm", &tart, &store).await;
-        assert!(result.is_ok());
+        let status = run("test-vm", &tart, &store).await.unwrap();
+        assert_eq!(status, VmStatus::Stopped);
     }
 }

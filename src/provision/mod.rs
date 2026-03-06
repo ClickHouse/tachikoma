@@ -10,63 +10,85 @@ use crate::Result;
 
 use credentials::{resolve_credentials, CredentialSource};
 
-/// Provision a freshly booted VM with credentials, git config, and Claude setup.
+/// Run a command in the VM via tart exec, returning Ok/Err.
+async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<String> {
+    let output = tart
+        .exec(
+            vm_name,
+            vec![
+                "bash".to_string(),
+                "-c".to_string(),
+                cmd.to_string(),
+            ],
+        )
+        .await?;
+
+    if output.exit_code != 0 {
+        return Err(crate::TachikomaError::Provision(format!(
+            "Command failed (exit {}): {}",
+            output.exit_code,
+            output.stderr.trim()
+        )));
+    }
+
+    Ok(output.stdout)
+}
+
+/// Provision a freshly booted VM with SSH keys, credentials, git config, and Claude setup.
+/// Uses tart exec for initial provisioning (SSH isn't available until keys are injected).
 pub async fn provision_vm(
-    _tart: &dyn TartRunner,
+    tart: &dyn TartRunner,
     ssh: &dyn SshClient,
     ip: IpAddr,
     vm_name: &str,
     _branch: &str,
     config: &Config,
 ) -> Result<()> {
-    let user = &config.ssh_user;
+    // 1. Inject host SSH public key so SSH works for subsequent connections
+    inject_ssh_key(tart, vm_name, &config.ssh_user).await?;
 
-    // 1. Set TACHIKOMA=1 in shell profile
-    ssh.run_command(
-        ip,
-        user,
-        "echo 'export TACHIKOMA=1' >> ~/.profile",
-    )
-    .await
-    .map_err(|e| {
-        crate::TachikomaError::Provision(format!("Failed to set TACHIKOMA env: {e}"))
-    })?;
+    // 2. Set TACHIKOMA=1 in shell profile
+    tart_exec(tart, vm_name, "echo 'export TACHIKOMA=1' >> ~/.profile")
+        .await
+        .map_err(|e| {
+            crate::TachikomaError::Provision(format!("Failed to set TACHIKOMA env: {e}"))
+        })?;
 
-    // 2. Set git user config
-    ssh.run_command(ip, user, "git config --global user.name 'Tachikoma'")
+    // 3. Set git user config
+    tart_exec(tart, vm_name, "git config --global user.name 'Tachikoma'")
         .await
         .ok();
-    ssh.run_command(
-        ip,
-        user,
+    tart_exec(
+        tart,
+        vm_name,
         "git config --global user.email 'tachikoma@localhost'",
     )
     .await
     .ok();
 
-    // 3. Resolve and inject credentials
+    // 4. Resolve and inject credentials
     let creds = resolve_credentials(
         config.credential_command.as_deref(),
         config.api_key_command.as_deref(),
     )
     .await;
 
-    inject_credentials(ssh, ip, user, &creds).await?;
+    inject_credentials(tart, vm_name, &creds).await?;
 
-    // 4. Mark Claude onboarding complete
-    ssh.run_command(
-        ip,
-        user,
+    // 5. Mark Claude onboarding complete
+    tart_exec(
+        tart,
+        vm_name,
         "mkdir -p ~/.claude && echo '{\"completedOnboarding\": true}' > ~/.claude/settings.local.json",
     )
     .await
     .ok();
 
-    // 5. Run profile scripts (via tart exec for VM-local execution)
+    // 6. Run profile scripts
     let config_dir = crate::state::FileStateStore::default_path();
     let profiles = profile::discover_profiles(
         &config_dir,
-        None, // repo root not accessible from here easily
+        None,
         &config.provision_scripts,
     )
     .await?;
@@ -79,7 +101,7 @@ pub async fn provision_vm(
             ))
         })?;
 
-        ssh.run_command(ip, user, &script_content)
+        tart_exec(tart, vm_name, &script_content)
             .await
             .map_err(|e| {
                 crate::TachikomaError::Provision(format!(
@@ -89,23 +111,81 @@ pub async fn provision_vm(
             })?;
     }
 
+    // 7. Verify SSH connectivity now works
+    let user = &config.ssh_user;
+    if let Err(e) = ssh.check_connection(ip, user).await {
+        tracing::warn!("SSH verification failed after provisioning: {e}");
+    }
+
     tracing::info!("VM '{vm_name}' provisioned successfully");
     Ok(())
 }
 
+/// Inject the host's SSH public key into the VM's authorized_keys.
+async fn inject_ssh_key(tart: &dyn TartRunner, vm_name: &str, user: &str) -> Result<()> {
+    // Find the host's SSH public key
+    let home = dirs::home_dir().ok_or_else(|| {
+        crate::TachikomaError::Provision("Cannot determine home directory".to_string())
+    })?;
+
+    let key_candidates = [
+        home.join(".ssh/id_ed25519.pub"),
+        home.join(".ssh/id_rsa.pub"),
+        home.join(".ssh/id_ecdsa.pub"),
+    ];
+
+    let pub_key = {
+        let mut found = None;
+        for path in &key_candidates {
+            if let Ok(content) = tokio::fs::read_to_string(path).await {
+                let trimmed = content.trim().to_string();
+                if !trimmed.is_empty() {
+                    found = Some(trimmed);
+                    break;
+                }
+            }
+        }
+        found
+    };
+
+    let Some(pub_key) = pub_key else {
+        tracing::warn!("No SSH public key found on host. SSH access may not work.");
+        return Ok(());
+    };
+
+    let escaped = pub_key.replace('\'', "'\\''");
+    let home_dir = if user == "root" {
+        "/root".to_string()
+    } else {
+        format!("/home/{user}")
+    };
+
+    tart_exec(
+        tart,
+        vm_name,
+        &format!(
+            "mkdir -p {home_dir}/.ssh && echo '{escaped}' >> {home_dir}/.ssh/authorized_keys && chmod 700 {home_dir}/.ssh && chmod 600 {home_dir}/.ssh/authorized_keys"
+        ),
+    )
+    .await
+    .map_err(|e| {
+        crate::TachikomaError::Provision(format!("Failed to inject SSH key: {e}"))
+    })?;
+
+    Ok(())
+}
+
 async fn inject_credentials(
-    ssh: &dyn SshClient,
-    ip: IpAddr,
-    user: &str,
+    tart: &dyn TartRunner,
+    vm_name: &str,
     creds: &CredentialSource,
 ) -> Result<()> {
     match creds {
         CredentialSource::Keychain(data) | CredentialSource::File(data) => {
-            // Write credentials JSON to VM
             let escaped = data.replace('\'', "'\\''");
-            ssh.run_command(
-                ip,
-                user,
+            tart_exec(
+                tart,
+                vm_name,
                 &format!("mkdir -p ~/.claude && echo '{escaped}' > ~/.claude/.credentials.json"),
             )
             .await
@@ -117,9 +197,9 @@ async fn inject_credentials(
         }
         CredentialSource::EnvVar(token) | CredentialSource::Command(token) => {
             let escaped = token.replace('\'', "'\\''");
-            ssh.run_command(
-                ip,
-                user,
+            tart_exec(
+                tart,
+                vm_name,
                 &format!("echo 'export CLAUDE_CODE_OAUTH_TOKEN={escaped}' >> ~/.profile"),
             )
             .await
@@ -131,9 +211,9 @@ async fn inject_credentials(
         }
         CredentialSource::ApiKey(key) | CredentialSource::ApiKeyCommand(key) => {
             let escaped = key.replace('\'', "'\\''");
-            ssh.run_command(
-                ip,
-                user,
+            tart_exec(
+                tart,
+                vm_name,
                 &format!("echo 'export ANTHROPIC_API_KEY={escaped}' >> ~/.profile"),
             )
             .await
@@ -146,9 +226,9 @@ async fn inject_credentials(
         CredentialSource::ProxyEnv { vars, .. } => {
             for (key, value) in vars {
                 let escaped_val = value.replace('\'', "'\\''");
-                ssh.run_command(
-                    ip,
-                    user,
+                tart_exec(
+                    tart,
+                    vm_name,
                     &format!("echo 'export {key}={escaped_val}' >> ~/.profile"),
                 )
                 .await
@@ -165,32 +245,35 @@ async fn inject_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ssh::MockSshClient;
-    use crate::tart::MockTartRunner;
     use crate::config::PartialConfig;
+    use crate::ssh::MockSshClient;
+    use crate::tart::types::ExecOutput;
+    use crate::tart::MockTartRunner;
     use std::net::Ipv4Addr;
-    use std::sync::atomic::{AtomicU32, Ordering};
 
     fn test_config() -> Config {
         Config::from_partial(PartialConfig::default()).unwrap()
     }
 
+    fn mock_tart_exec_ok() -> MockTartRunner {
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(|_, _| {
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        });
+        tart
+    }
+
     #[tokio::test]
     async fn test_provision_sets_env() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
-        let tart = MockTartRunner::new();
-        let call_count = AtomicU32::new(0);
+        let tart = mock_tart_exec_ok();
 
         let mut ssh = MockSshClient::new();
-        ssh.expect_run_command()
-            .returning(move |_, _, cmd| {
-                call_count.fetch_add(1, Ordering::SeqCst);
-                // Verify TACHIKOMA env is set
-                if cmd.contains("TACHIKOMA=1") {
-                    return Ok("".to_string());
-                }
-                Ok("".to_string())
-            });
+        ssh.expect_check_connection().returning(|_, _| Ok(true));
 
         let config = test_config();
         let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", &config).await;
@@ -198,22 +281,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_provision_handles_ssh_failures_gracefully() {
+    async fn test_provision_handles_ssh_verify_failure() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
-        let tart = MockTartRunner::new();
+        let tart = mock_tart_exec_ok();
 
         let mut ssh = MockSshClient::new();
-        // First call succeeds (TACHIKOMA env), rest may fail
-        let count = AtomicU32::new(0);
-        ssh.expect_run_command()
-            .returning(move |_, _, _| {
-                let n = count.fetch_add(1, Ordering::SeqCst);
-                if n == 0 {
-                    Ok("".to_string())
-                } else {
-                    Ok("".to_string()) // git config returns ok (we use .ok())
-                }
-            });
+        // SSH verify fails but provisioning still succeeds
+        ssh.expect_check_connection()
+            .returning(|_, _| Err(crate::TachikomaError::Ssh("connection refused".into())));
 
         let config = test_config();
         let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", &config).await;

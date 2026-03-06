@@ -116,7 +116,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
         Some(Command::Suspend { name }) => {
             let vm_name = resolve_vm_name(name, &git, &cwd).await?;
             tachikoma::cmd::suspend::run(&vm_name, &tart, &state_store).await?;
-            print_success(mode, &format!("Suspended {vm_name}"), None);
+            print_success(mode, &format!("Stopped {vm_name}"), None);
         }
 
         Some(Command::Destroy { name, force: _ }) => {

@@ -189,7 +189,7 @@ impl TartRunner for RealTartRunner {
     }
 
     async fn exec(&self, name: &str, cmd: Vec<String>) -> Result<ExecOutput> {
-        let mut args = vec!["exec".to_string(), name.to_string(), "--".to_string()];
+        let mut args = vec!["exec".to_string(), name.to_string()];
         args.extend(cmd);
 
         let output = Self::tart_cmd()
