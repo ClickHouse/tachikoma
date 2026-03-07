@@ -433,6 +433,10 @@ async fn ensure_tachikoma_key() -> Result<std::path::PathBuf> {
             })?;
 
         if !output.status.success() {
+            // A parallel invocation may have created the key concurrently — check again.
+            if pub_path.exists() {
+                return Ok(key_path);
+            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(crate::TachikomaError::Provision(format!(
                 "ssh-keygen failed: {stderr}"
@@ -597,8 +601,33 @@ mod tests {
         tart
     }
 
+    /// Create a temporary home directory with a pre-generated SSH key pair so that
+    /// `ensure_tachikoma_key` skips `ssh-keygen` entirely. Returns the tempdir (must
+    /// be kept alive for the duration of the test) and the path to the private key.
+    fn setup_temp_home() -> (tempfile::TempDir, std::path::PathBuf) {
+        let home = tempfile::tempdir().expect("tempdir");
+        let ssh_dir = home.path().join(".ssh");
+        std::fs::create_dir_all(&ssh_dir).unwrap();
+        let key_path = ssh_dir.join("tachikoma");
+        let pub_path = key_path.with_extension("pub");
+        std::fs::write(
+            &key_path,
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &pub_path,
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIfake tachikoma\n",
+        )
+        .unwrap();
+        // Point HOME at the temp dir so dirs::home_dir() and tachikoma_key_path() resolve here.
+        std::env::set_var("HOME", home.path());
+        (home, key_path)
+    }
+
     #[tokio::test]
     async fn test_provision_sets_env() {
+        let (_home, _key) = setup_temp_home();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
         let tart = mock_tart_exec_ok();
 
@@ -617,11 +646,12 @@ mod tests {
             &|_| {},
         )
         .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "provision_vm failed: {result:?}");
     }
 
     #[tokio::test]
     async fn test_provision_handles_ssh_verify_failure() {
+        let (_home, _key) = setup_temp_home();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
         let tart = mock_tart_exec_ok();
 
@@ -642,7 +672,7 @@ mod tests {
             &|_| {},
         )
         .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "provision_vm failed: {result:?}");
     }
 
     #[tokio::test]
