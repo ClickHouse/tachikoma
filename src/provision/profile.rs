@@ -112,13 +112,9 @@ mod tests {
             .await
             .unwrap();
 
-        let profiles = discover_profiles(
-            config_dir.path(),
-            Some(repo_dir.path()),
-            &[],
-        )
-        .await
-        .unwrap();
+        let profiles = discover_profiles(config_dir.path(), Some(repo_dir.path()), &[])
+            .await
+            .unwrap();
         assert_eq!(profiles.len(), 1);
     }
 
@@ -127,9 +123,15 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let profiles_dir = dir.path().join("profiles");
         tokio::fs::create_dir_all(&profiles_dir).await.unwrap();
-        tokio::fs::write(profiles_dir.join("02-config.sh"), "").await.unwrap();
-        tokio::fs::write(profiles_dir.join("01-setup.sh"), "").await.unwrap();
-        tokio::fs::write(profiles_dir.join("03-finalize.sh"), "").await.unwrap();
+        tokio::fs::write(profiles_dir.join("02-config.sh"), "")
+            .await
+            .unwrap();
+        tokio::fs::write(profiles_dir.join("01-setup.sh"), "")
+            .await
+            .unwrap();
+        tokio::fs::write(profiles_dir.join("03-finalize.sh"), "")
+            .await
+            .unwrap();
 
         let profiles = discover_profiles(dir.path(), None, &[]).await.unwrap();
         assert_eq!(profiles.len(), 3);
@@ -157,13 +159,9 @@ mod tests {
     #[tokio::test]
     async fn test_missing_extra_script_skipped() {
         let dir = TempDir::new().unwrap();
-        let profiles = discover_profiles(
-            dir.path(),
-            None,
-            &["/nonexistent/script.sh".to_string()],
-        )
-        .await
-        .unwrap();
+        let profiles = discover_profiles(dir.path(), None, &["/nonexistent/script.sh".to_string()])
+            .await
+            .unwrap();
         assert!(profiles.is_empty());
     }
 }

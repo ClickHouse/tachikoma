@@ -30,9 +30,9 @@ impl VmEntry {
             crate::TachikomaError::Vm(format!("VM '{}' has no IP address", self.name))
         })?;
 
-        ip_str.parse().map_err(|e| {
-            crate::TachikomaError::Vm(format!("Invalid IP address '{ip_str}': {e}"))
-        })
+        ip_str
+            .parse()
+            .map_err(|e| crate::TachikomaError::Vm(format!("Invalid IP address '{ip_str}': {e}")))
     }
 }
 

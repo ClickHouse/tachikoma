@@ -2,11 +2,7 @@ use crate::state::StateStore;
 use crate::tart::TartRunner;
 use crate::Result;
 
-pub async fn run(
-    vm_name: &str,
-    tart: &dyn TartRunner,
-    state_store: &dyn StateStore,
-) -> Result<()> {
+pub async fn run(vm_name: &str, tart: &dyn TartRunner, state_store: &dyn StateStore) -> Result<()> {
     // Stop first if running (ignore errors)
     let _ = tart.stop(vm_name).await;
 

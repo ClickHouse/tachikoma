@@ -112,9 +112,8 @@ impl TartRunner for RealTartRunner {
             });
         }
 
-        cmd.spawn().map_err(|e| {
-            crate::TachikomaError::Tart(format!("Failed to spawn tart run: {e}"))
-        })?;
+        cmd.spawn()
+            .map_err(|e| crate::TachikomaError::Tart(format!("Failed to spawn tart run: {e}")))?;
 
         Ok(())
     }
@@ -141,9 +140,7 @@ impl TartRunner for RealTartRunner {
             .args(["suspend", name])
             .output()
             .await
-            .map_err(|e| {
-                crate::TachikomaError::Tart(format!("Failed to run tart suspend: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::Tart(format!("Failed to run tart suspend: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -160,9 +157,7 @@ impl TartRunner for RealTartRunner {
             .args(["delete", name])
             .output()
             .await
-            .map_err(|e| {
-                crate::TachikomaError::Tart(format!("Failed to run tart delete: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::Tart(format!("Failed to run tart delete: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -193,11 +188,10 @@ impl TartRunner for RealTartRunner {
         let mut args = vec!["exec".to_string(), name.to_string()];
         args.extend(cmd);
 
-        let output = Self::tart_cmd()
-            .args(&args)
-            .output()
-            .await
-            .map_err(|e| crate::TachikomaError::Tart(format!("Failed to run tart exec: {e}")))?;
+        let output =
+            Self::tart_cmd().args(&args).output().await.map_err(|e| {
+                crate::TachikomaError::Tart(format!("Failed to run tart exec: {e}"))
+            })?;
 
         Ok(ExecOutput {
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),

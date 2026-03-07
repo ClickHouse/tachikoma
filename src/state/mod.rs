@@ -52,9 +52,7 @@ impl FileStateStore {
             .write(true)
             .read(true)
             .open(&self.lock_path)
-            .map_err(|e| {
-                crate::TachikomaError::State(format!("Failed to open lock file: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::State(format!("Failed to open lock file: {e}")))?;
 
         let mut lock = RwLock::new(file);
         let _guard = lock.write().map_err(|e| {

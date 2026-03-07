@@ -20,9 +20,7 @@ pub async fn run(
         let status = std::process::Command::new(&editor)
             .arg(&config_path)
             .status()
-            .map_err(|e| {
-                crate::TachikomaError::Config(format!("Failed to open editor: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::Config(format!("Failed to open editor: {e}")))?;
 
         if !status.success() {
             return Err(crate::TachikomaError::Config(
@@ -33,9 +31,8 @@ pub async fn run(
     }
 
     let config = loader.load(repo_root).await?;
-    let data = serde_json::to_value(&config).map_err(|e| {
-        crate::TachikomaError::Config(format!("Failed to serialize config: {e}"))
-    })?;
+    let data = serde_json::to_value(&config)
+        .map_err(|e| crate::TachikomaError::Config(format!("Failed to serialize config: {e}")))?;
 
     print_success(mode, "Current configuration", Some(data));
     Ok(())

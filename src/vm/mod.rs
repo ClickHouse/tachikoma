@@ -74,11 +74,7 @@ impl<'a> VmOrchestrator<'a> {
     }
 
     /// Resolve branch name: use explicit or detect from current directory
-    pub async fn resolve_branch(
-        &self,
-        explicit: Option<&str>,
-        cwd: &Path,
-    ) -> Result<String> {
+    pub async fn resolve_branch(&self, explicit: Option<&str>, cwd: &Path) -> Result<String> {
         match explicit {
             Some(branch) => Ok(branch.to_string()),
             None => self.git.current_branch(cwd).await,
@@ -107,17 +103,25 @@ impl<'a> VmOrchestrator<'a> {
         // Check if a worktree already exists for this branch
         for wt in &worktrees {
             if wt.branch.as_deref() == Some(branch) {
-                tracing::debug!("Found existing worktree for branch '{branch}' at {:?}", wt.path);
+                tracing::debug!(
+                    "Found existing worktree for branch '{branch}' at {:?}",
+                    wt.path
+                );
                 return Ok(wt.path.clone());
             }
         }
 
         // Create a new worktree
-        let base_dir = self.config.worktree_dir.as_deref().unwrap_or_else(|| {
-            repo_root.parent().unwrap_or(repo_root)
-        });
+        let base_dir = self
+            .config
+            .worktree_dir
+            .as_deref()
+            .unwrap_or_else(|| repo_root.parent().unwrap_or(repo_root));
         let target = base_dir.join(format!("{repo_name}-{branch}"));
-        tracing::info!("Creating worktree for branch '{branch}' at {}", target.display());
+        tracing::info!(
+            "Creating worktree for branch '{branch}' at {}",
+            target.display()
+        );
         self.git.create_worktree(repo_root, branch, &target).await
     }
 
@@ -146,8 +150,15 @@ impl<'a> VmOrchestrator<'a> {
                 on_status("Connecting to running VM...");
                 tracing::info!("VM '{vm_name}' is already running");
                 let ip = self.get_ip_or_wait(&vm_name).await?;
-                self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
-                    .await?;
+                self.update_state(
+                    &vm_name,
+                    repo_name,
+                    branch,
+                    worktree_path,
+                    VmStatus::Running,
+                    Some(ip),
+                )
+                .await?;
                 Ok(SpawnResult::Reconnected { name: vm_name, ip })
             }
             Some(TartVmState::Suspended) => {
@@ -158,8 +169,15 @@ impl<'a> VmOrchestrator<'a> {
                 self.tart.run(&vm_name, &opts).await?;
                 on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
-                self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
-                    .await?;
+                self.update_state(
+                    &vm_name,
+                    repo_name,
+                    branch,
+                    worktree_path,
+                    VmStatus::Running,
+                    Some(ip),
+                )
+                .await?;
                 Ok(SpawnResult::Resumed { name: vm_name, ip })
             }
             Some(TartVmState::Stopped) => {
@@ -170,14 +188,27 @@ impl<'a> VmOrchestrator<'a> {
                 self.tart.run(&vm_name, &opts).await?;
                 on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
-                self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
-                    .await?;
+                self.update_state(
+                    &vm_name,
+                    repo_name,
+                    branch,
+                    worktree_path,
+                    VmStatus::Running,
+                    Some(ip),
+                )
+                .await?;
                 Ok(SpawnResult::Started { name: vm_name, ip })
             }
             Some(TartVmState::Unknown) | None => {
                 // Not found — clone and create
-                on_status(&format!("Cloning base image '{}'...", self.config.base_image));
-                tracing::info!("Creating new VM '{vm_name}' from '{}'", self.config.base_image);
+                on_status(&format!(
+                    "Cloning base image '{}'...",
+                    self.config.base_image
+                ));
+                tracing::info!(
+                    "Creating new VM '{vm_name}' from '{}'",
+                    self.config.base_image
+                );
                 self.tart
                     .clone_vm(&self.config.base_image, &vm_name)
                     .await?;
@@ -186,21 +217,26 @@ impl<'a> VmOrchestrator<'a> {
                 self.tart.run(&vm_name, &opts).await?;
                 on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
-                self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
-                    .await?;
+                self.update_state(
+                    &vm_name,
+                    repo_name,
+                    branch,
+                    worktree_path,
+                    VmStatus::Running,
+                    Some(ip),
+                )
+                .await?;
                 Ok(SpawnResult::Created { name: vm_name, ip })
             }
         }
     }
 
     fn build_run_opts(&self, worktree_path: &Path, repo_root: &Path) -> RunOpts {
-        let mut dirs = vec![
-            DirMount {
-                name: Some("code".into()),
-                host_path: worktree_path.to_path_buf(),
-                read_only: true,
-            },
-        ];
+        let mut dirs = vec![DirMount {
+            name: Some("code".into()),
+            host_path: worktree_path.to_path_buf(),
+            read_only: true,
+        }];
 
         // Mount .git directory read-only
         let git_dir = repo_root.join(".git");
@@ -230,9 +266,7 @@ impl<'a> VmOrchestrator<'a> {
             // Mount current project's memory/ directory (not the whole project dir,
             // which contains sensitive conversation transcripts in .jsonl files).
             // Claude Code uses the path slug: /a/b/c → -a-b-c
-            let project_slug = repo_root
-                .to_string_lossy()
-                .replace('/', "-");
+            let project_slug = repo_root.to_string_lossy().replace('/', "-");
             let memory_dir = claude_dir
                 .join("projects")
                 .join(&project_slug)
@@ -256,7 +290,12 @@ impl<'a> VmOrchestrator<'a> {
     async fn get_ip_or_wait(&self, vm_name: &str) -> Result<IpAddr> {
         // Try getting IP directly first
         if let Ok(Some(ip)) = self.tart.ip(vm_name).await {
-            if self.ssh.check_connection(ip, &self.config.ssh_user).await.unwrap_or(false) {
+            if self
+                .ssh
+                .check_connection(ip, &self.config.ssh_user)
+                .await
+                .unwrap_or(false)
+            {
                 return Ok(ip);
             }
         }
@@ -371,7 +410,13 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
+            .spawn(
+                "main",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
             .await
             .unwrap();
 
@@ -403,7 +448,13 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
+            .spawn(
+                "main",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
             .await
             .unwrap();
 
@@ -435,7 +486,13 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("feat", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
+            .spawn(
+                "feat",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
             .await
             .unwrap();
 
@@ -467,7 +524,13 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("dev", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
+            .spawn(
+                "dev",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
             .await
             .unwrap();
 
@@ -483,7 +546,10 @@ mod tests {
         let config = test_config();
 
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
-        let branch = orch.resolve_branch(Some("feature/x"), Path::new("/tmp")).await.unwrap();
+        let branch = orch
+            .resolve_branch(Some("feature/x"), Path::new("/tmp"))
+            .await
+            .unwrap();
         assert_eq!(branch, "feature/x");
     }
 
@@ -523,16 +589,20 @@ mod tests {
         state_store.expect_load().returning(|| Ok(State::new()));
         state_store
             .expect_save()
-            .withf(|state: &State| {
-                state.vms.len() == 1 && state.vms[0].status == VmStatus::Running
-            })
+            .withf(|state: &State| state.vms.len() == 1 && state.vms[0].status == VmStatus::Running)
             .returning(|_| Ok(()));
 
         let config = test_config();
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
+            .spawn(
+                "main",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
             .await;
         assert!(result.is_ok());
     }

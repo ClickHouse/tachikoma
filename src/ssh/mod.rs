@@ -30,9 +30,12 @@ impl RealSshClient {
         // StrictHostKeyChecking=no is intentional: VMs are local ephemeral instances
         // that get new host keys on each clone. There is no persistent identity to verify.
         let mut opts = vec![
-            "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
-            "-o".to_string(), "UserKnownHostsFile=/dev/null".to_string(),
-            "-o".to_string(), "LogLevel=ERROR".to_string(),
+            "-o".to_string(),
+            "StrictHostKeyChecking=no".to_string(),
+            "-o".to_string(),
+            "UserKnownHostsFile=/dev/null".to_string(),
+            "-o".to_string(),
+            "LogLevel=ERROR".to_string(),
         ];
         if let Some(key_path) = tachikoma_key_path() {
             if key_path.exists() {

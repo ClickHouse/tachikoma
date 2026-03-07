@@ -3,7 +3,11 @@ pub mod output;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "tachikoma", about = "Autonomous VM sandboxes per git worktree", version)]
+#[command(
+    name = "tachikoma",
+    about = "Autonomous VM sandboxes per git worktree",
+    version
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,

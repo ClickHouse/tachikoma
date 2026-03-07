@@ -21,11 +21,7 @@ async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<St
     let output = tart
         .exec(
             vm_name,
-            vec![
-                "bash".to_string(),
-                "-c".to_string(),
-                cmd.to_string(),
-            ],
+            vec!["bash".to_string(), "-c".to_string(), cmd.to_string()],
         )
         .await?;
 
@@ -102,7 +98,9 @@ pub async fn provision_vm(
         tart_exec(
             tart,
             vm_name,
-            &format!("mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"),
+            &format!(
+                "mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"
+            ),
         )
         .await
         .ok();
@@ -124,12 +122,7 @@ pub async fn provision_vm(
     // 7. Run profile scripts
     on_status("Running provisioning scripts...");
     let config_dir = crate::state::FileStateStore::default_path();
-    let profiles = profile::discover_profiles(
-        &config_dir,
-        None,
-        &config.provision_scripts,
-    )
-    .await?;
+    let profiles = profile::discover_profiles(&config_dir, None, &config.provision_scripts).await?;
 
     for script in &profiles {
         let script_content = tokio::fs::read_to_string(script).await.map_err(|e| {
@@ -161,11 +154,7 @@ pub async fn provision_vm(
 }
 
 /// Mount virtiofs shares inside the VM and configure git environment.
-async fn mount_and_configure_git(
-    tart: &dyn TartRunner,
-    vm_name: &str,
-    branch: &str,
-) -> Result<()> {
+async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &str) -> Result<()> {
     // Mount the virtiofs automount point
     tart_exec(
         tart,
@@ -203,11 +192,9 @@ async fn mount_and_configure_git(
          echo 'export GIT_WORK_TREE=/mnt/tachikoma/code' >> ~/.profile && \
          echo 'cd /mnt/tachikoma/code' >> ~/.profile"
     );
-    tart_exec(tart, vm_name, &profile_cmds)
-        .await
-        .map_err(|e| {
-            crate::TachikomaError::Provision(format!("Failed to set git environment: {e}"))
-        })?;
+    tart_exec(tart, vm_name, &profile_cmds).await.map_err(|e| {
+        crate::TachikomaError::Provision(format!("Failed to set git environment: {e}"))
+    })?;
 
     // Set VM hostname to branch slug so shell prompt shows admin@<branch>
     let hostname = crate::branch_slug(branch);
@@ -242,9 +229,7 @@ async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
         "curl -fsSL https://claude.ai/install.sh | bash",
     )
     .await
-    .map_err(|e| {
-        crate::TachikomaError::Provision(format!("Failed to install Claude: {e}"))
-    })?;
+    .map_err(|e| crate::TachikomaError::Provision(format!("Failed to install Claude: {e}")))?;
 
     // Verify installation and complete first-run initialization.
     // Running a non-interactive command creates Claude's runtime state files
@@ -432,10 +417,14 @@ async fn ensure_tachikoma_key() -> Result<std::path::PathBuf> {
 
         let output = tokio::process::Command::new("ssh-keygen")
             .args([
-                "-t", "ed25519",
-                "-f", &key_path.display().to_string(),
-                "-N", "",
-                "-C", "tachikoma",
+                "-t",
+                "ed25519",
+                "-f",
+                &key_path.display().to_string(),
+                "-N",
+                "",
+                "-C",
+                "tachikoma",
             ])
             .output()
             .await
@@ -460,14 +449,12 @@ async fn inject_ssh_key(tart: &dyn TartRunner, vm_name: &str, user: &str) -> Res
     let tachikoma_key = ensure_tachikoma_key().await?;
     let pub_path = tachikoma_key.with_extension("pub");
 
-    let pub_key = tokio::fs::read_to_string(&pub_path)
-        .await
-        .map_err(|e| {
-            crate::TachikomaError::Provision(format!(
-                "Failed to read tachikoma public key {}: {e}",
-                pub_path.display()
-            ))
-        })?;
+    let pub_key = tokio::fs::read_to_string(&pub_path).await.map_err(|e| {
+        crate::TachikomaError::Provision(format!(
+            "Failed to read tachikoma public key {}: {e}",
+            pub_path.display()
+        ))
+    })?;
 
     let pub_key = pub_key.trim().to_string();
     if pub_key.is_empty() {
@@ -513,7 +500,9 @@ async fn inject_profile_line(tart: &dyn TartRunner, vm_name: &str, line: &str) -
 /// Validate that an env var name contains only safe characters (A-Z, 0-9, _).
 fn is_valid_env_name(name: &str) -> bool {
     !name.is_empty()
-        && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
         && !name.as_bytes()[0].is_ascii_digit()
 }
 
@@ -547,21 +536,21 @@ async fn inject_credentials(
             })?;
         }
         CredentialSource::EnvVar(token) | CredentialSource::Command(token) => {
-            inject_profile_line(tart, vm_name, &format!("export CLAUDE_CODE_OAUTH_TOKEN={token}\n"))
-                .await
-                .map_err(|e| {
-                    crate::TachikomaError::Provision(format!(
-                        "Failed to inject OAuth token: {e}"
-                    ))
-                })?;
+            inject_profile_line(
+                tart,
+                vm_name,
+                &format!("export CLAUDE_CODE_OAUTH_TOKEN={token}\n"),
+            )
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!("Failed to inject OAuth token: {e}"))
+            })?;
         }
         CredentialSource::ApiKey(key) | CredentialSource::ApiKeyCommand(key) => {
             inject_profile_line(tart, vm_name, &format!("export ANTHROPIC_API_KEY={key}\n"))
                 .await
                 .map_err(|e| {
-                    crate::TachikomaError::Provision(format!(
-                        "Failed to inject API key: {e}"
-                    ))
+                    crate::TachikomaError::Provision(format!("Failed to inject API key: {e}"))
                 })?;
         }
         CredentialSource::ProxyEnv { vars, .. } => {
@@ -617,7 +606,17 @@ mod tests {
         ssh.expect_check_connection().returning(|_, _| Ok(true));
 
         let config = test_config();
-        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", Path::new("/tmp/repo"), &config, &|_| {}).await;
+        let result = provision_vm(
+            &tart,
+            &ssh,
+            ip,
+            "test-vm",
+            "main",
+            Path::new("/tmp/repo"),
+            &config,
+            &|_| {},
+        )
+        .await;
         assert!(result.is_ok());
     }
 
@@ -632,7 +631,17 @@ mod tests {
             .returning(|_, _| Err(crate::TachikomaError::Ssh("connection refused".into())));
 
         let config = test_config();
-        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", Path::new("/tmp/repo"), &config, &|_| {}).await;
+        let result = provision_vm(
+            &tart,
+            &ssh,
+            ip,
+            "test-vm",
+            "main",
+            Path::new("/tmp/repo"),
+            &config,
+            &|_| {},
+        )
+        .await;
         assert!(result.is_ok());
     }
 
@@ -648,7 +657,11 @@ mod tests {
             if args.len() >= 3 {
                 cmds.lock().unwrap().push(args[2].clone());
             }
-            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
         });
 
         let creds = CredentialSource::Keychain("sk-ant-test-key".into());
@@ -678,7 +691,11 @@ mod tests {
             if args.len() >= 3 {
                 cmds.lock().unwrap().push(args[2].clone());
             }
-            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
         });
 
         let creds = CredentialSource::File(r#"{"oauth":"token"}"#.into());
@@ -703,7 +720,11 @@ mod tests {
             if args.len() >= 3 {
                 cmds.lock().unwrap().push(args[2].clone());
             }
-            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
         });
 
         let creds = CredentialSource::ApiKey("sk-test-123".into());
@@ -728,7 +749,11 @@ mod tests {
             if args.len() >= 3 {
                 cmds.lock().unwrap().push(args[2].clone());
             }
-            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
         });
 
         let creds = CredentialSource::EnvVar("oauth-token-123".into());

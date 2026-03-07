@@ -16,9 +16,8 @@ pub async fn run_server() -> Result<()> {
     tracing::info!("MCP server starting on stdio");
 
     for line in stdin.lock().lines() {
-        let line = line.map_err(|e| {
-            crate::TachikomaError::Mcp(format!("Failed to read stdin: {e}"))
-        })?;
+        let line =
+            line.map_err(|e| crate::TachikomaError::Mcp(format!("Failed to read stdin: {e}")))?;
 
         let line = line.trim();
         if line.is_empty() {
@@ -28,11 +27,7 @@ pub async fn run_server() -> Result<()> {
         let request: JsonRpcRequest = match serde_json::from_str(line) {
             Ok(req) => req,
             Err(e) => {
-                let resp = types::JsonRpcResponse::error(
-                    None,
-                    -32700,
-                    format!("Parse error: {e}"),
-                );
+                let resp = types::JsonRpcResponse::error(None, -32700, format!("Parse error: {e}"));
                 write_response(&stdout, &resp)?;
                 continue;
             }
@@ -56,7 +51,9 @@ async fn dispatch(request: &JsonRpcRequest) -> Option<types::JsonRpcResponse> {
         "tools/call" => {
             // Tool calls would wire into actual commands here
             // For now, return a stub
-            let tool_name = request.params.get("name")
+            let tool_name = request
+                .params
+                .get("name")
                 .and_then(|n| n.as_str())
                 .unwrap_or("unknown");
 
@@ -73,21 +70,15 @@ async fn dispatch(request: &JsonRpcRequest) -> Option<types::JsonRpcResponse> {
     }
 }
 
-fn write_response(
-    stdout: &io::Stdout,
-    response: &types::JsonRpcResponse,
-) -> Result<()> {
-    let json = serde_json::to_string(response).map_err(|e| {
-        crate::TachikomaError::Mcp(format!("Failed to serialize response: {e}"))
-    })?;
+fn write_response(stdout: &io::Stdout, response: &types::JsonRpcResponse) -> Result<()> {
+    let json = serde_json::to_string(response)
+        .map_err(|e| crate::TachikomaError::Mcp(format!("Failed to serialize response: {e}")))?;
 
     let mut lock = stdout.lock();
-    writeln!(lock, "{json}").map_err(|e| {
-        crate::TachikomaError::Mcp(format!("Failed to write response: {e}"))
-    })?;
-    lock.flush().map_err(|e| {
-        crate::TachikomaError::Mcp(format!("Failed to flush stdout: {e}"))
-    })?;
+    writeln!(lock, "{json}")
+        .map_err(|e| crate::TachikomaError::Mcp(format!("Failed to write response: {e}")))?;
+    lock.flush()
+        .map_err(|e| crate::TachikomaError::Mcp(format!("Failed to flush stdout: {e}")))?;
 
     Ok(())
 }

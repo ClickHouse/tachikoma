@@ -131,14 +131,10 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart
-            .expect_ip()
-            .returning(move |_| Ok(Some(ip)));
+        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
-        mock_ssh
-            .expect_check_port_open()
-            .returning(|_| Ok(true));
+        mock_ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -167,9 +163,7 @@ mod tests {
         });
 
         let mut mock_ssh = MockSshClient::new();
-        mock_ssh
-            .expect_check_port_open()
-            .returning(|_| Ok(true));
+        mock_ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -188,17 +182,13 @@ mod tests {
         let ssh_count = AtomicU32::new(0);
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart
-            .expect_ip()
-            .returning(move |_| Ok(Some(ip)));
+        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
-        mock_ssh
-            .expect_check_port_open()
-            .returning(move |_| {
-                let count = ssh_count.fetch_add(1, Ordering::SeqCst);
-                Ok(count >= 2)
-            });
+        mock_ssh.expect_check_port_open().returning(move |_| {
+            let count = ssh_count.fetch_add(1, Ordering::SeqCst);
+            Ok(count >= 2)
+        });
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -228,7 +218,10 @@ mod tests {
         let result = wait_for_boot(&mock_tart, &mock_ssh, "test-vm", &config).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Timed out"), "Expected timeout error, got: {err}");
+        assert!(
+            err.contains("Timed out"),
+            "Expected timeout error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -236,14 +229,10 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart
-            .expect_ip()
-            .returning(move |_| Ok(Some(ip)));
+        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
-        mock_ssh
-            .expect_check_port_open()
-            .returning(|_| Ok(false));
+        mock_ssh.expect_check_port_open().returning(|_| Ok(false));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -255,7 +244,10 @@ mod tests {
         let result = wait_for_boot(&mock_tart, &mock_ssh, "test-vm", &config).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("Timed out"), "Expected timeout error, got: {err}");
+        assert!(
+            err.contains("Timed out"),
+            "Expected timeout error, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -275,9 +267,7 @@ mod tests {
         });
 
         let mut mock_ssh = MockSshClient::new();
-        mock_ssh
-            .expect_check_port_open()
-            .returning(|_| Ok(true));
+        mock_ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),

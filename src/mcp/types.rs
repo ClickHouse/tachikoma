@@ -137,7 +137,8 @@ mod tests {
 
     #[test]
     fn test_json_rpc_response_success() {
-        let resp = JsonRpcResponse::success(Some(serde_json::json!(1)), serde_json::json!({"ok": true}));
+        let resp =
+            JsonRpcResponse::success(Some(serde_json::json!(1)), serde_json::json!({"ok": true}));
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"result\""));
         assert!(!json.contains("\"error\""));
@@ -145,7 +146,11 @@ mod tests {
 
     #[test]
     fn test_json_rpc_response_error() {
-        let resp = JsonRpcResponse::error(Some(serde_json::json!(1)), -32601, "Method not found".into());
+        let resp = JsonRpcResponse::error(
+            Some(serde_json::json!(1)),
+            -32601,
+            "Method not found".into(),
+        );
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"error\""));
         assert!(!json.contains("\"result\""));
@@ -170,7 +175,9 @@ mod tests {
         let init = InitializeResult {
             protocol_version: "2024-11-05".to_string(),
             capabilities: Capabilities {
-                tools: ToolsCapability { list_changed: false },
+                tools: ToolsCapability {
+                    list_changed: false,
+                },
             },
             server_info: ServerInfo {
                 name: "tachikoma".to_string(),

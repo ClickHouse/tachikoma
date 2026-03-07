@@ -42,9 +42,9 @@ pub async fn install(state_store: &dyn StateStore, ssh_user: &str) -> Result<()>
     if let Some(parent) = config_path.parent() {
         tokio::fs::create_dir_all(parent).await.ok();
     }
-    tokio::fs::write(&config_path, new_contents).await.map_err(|e| {
-        crate::TachikomaError::Ssh(format!("Failed to write SSH config: {e}"))
-    })?;
+    tokio::fs::write(&config_path, new_contents)
+        .await
+        .map_err(|e| crate::TachikomaError::Ssh(format!("Failed to write SSH config: {e}")))?;
 
     Ok(())
 }
@@ -59,9 +59,9 @@ pub async fn uninstall() -> Result<()> {
         .await
         .unwrap_or_default();
     let cleaned = remove_managed_block(&contents);
-    tokio::fs::write(&config_path, cleaned).await.map_err(|e| {
-        crate::TachikomaError::Ssh(format!("Failed to write SSH config: {e}"))
-    })?;
+    tokio::fs::write(&config_path, cleaned)
+        .await
+        .map_err(|e| crate::TachikomaError::Ssh(format!("Failed to write SSH config: {e}")))?;
 
     Ok(())
 }

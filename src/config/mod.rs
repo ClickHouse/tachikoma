@@ -39,13 +39,9 @@ impl ConfigLoader for FileConfigLoader {
         // Layer 1: Global config
         let global_path = Self::global_config_path();
         if global_path.exists() {
-            let contents = tokio::fs::read_to_string(&global_path)
-                .await
-                .map_err(|e| {
-                    crate::TachikomaError::Config(format!(
-                        "Failed to read global config: {e}"
-                    ))
-                })?;
+            let contents = tokio::fs::read_to_string(&global_path).await.map_err(|e| {
+                crate::TachikomaError::Config(format!("Failed to read global config: {e}"))
+            })?;
             let global: PartialConfig = toml::from_str(&contents).map_err(|e| {
                 crate::TachikomaError::Config(format!("Failed to parse global config: {e}"))
             })?;
@@ -56,13 +52,9 @@ impl ConfigLoader for FileConfigLoader {
         if let Some(root) = repo_root {
             let repo_config = root.join(".tachikoma.toml");
             if repo_config.exists() {
-                let contents = tokio::fs::read_to_string(&repo_config)
-                    .await
-                    .map_err(|e| {
-                        crate::TachikomaError::Config(format!(
-                            "Failed to read repo config: {e}"
-                        ))
-                    })?;
+                let contents = tokio::fs::read_to_string(&repo_config).await.map_err(|e| {
+                    crate::TachikomaError::Config(format!("Failed to read repo config: {e}"))
+                })?;
                 let partial: PartialConfig = toml::from_str(&contents).map_err(|e| {
                     crate::TachikomaError::Config(format!("Failed to parse repo config: {e}"))
                 })?;
@@ -74,14 +66,10 @@ impl ConfigLoader for FileConfigLoader {
                 let contents = tokio::fs::read_to_string(&local_config)
                     .await
                     .map_err(|e| {
-                        crate::TachikomaError::Config(format!(
-                            "Failed to read local config: {e}"
-                        ))
+                        crate::TachikomaError::Config(format!("Failed to read local config: {e}"))
                     })?;
                 let partial: PartialConfig = toml::from_str(&contents).map_err(|e| {
-                    crate::TachikomaError::Config(format!(
-                        "Failed to parse local config: {e}"
-                    ))
+                    crate::TachikomaError::Config(format!("Failed to parse local config: {e}"))
                 })?;
                 merged = merged.merge(partial);
             }
@@ -136,12 +124,9 @@ mod tests {
         .await
         .unwrap();
 
-        tokio::fs::write(
-            dir.path().join(".tachikoma.local.toml"),
-            "vm_cpus = 16\n",
-        )
-        .await
-        .unwrap();
+        tokio::fs::write(dir.path().join(".tachikoma.local.toml"), "vm_cpus = 16\n")
+            .await
+            .unwrap();
 
         let loader = FileConfigLoader::new();
         let config = loader.load(Some(dir.path().to_path_buf())).await.unwrap();

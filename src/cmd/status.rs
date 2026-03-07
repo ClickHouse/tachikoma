@@ -12,9 +12,9 @@ pub async fn run(
     let state = state_store.load().await?;
     let tart_vms = tart.list().await.unwrap_or_default();
 
-    let entry = state.find_vm(vm_name).ok_or_else(|| {
-        crate::TachikomaError::Vm(format!("VM '{vm_name}' not found in state"))
-    })?;
+    let entry = state
+        .find_vm(vm_name)
+        .ok_or_else(|| crate::TachikomaError::Vm(format!("VM '{vm_name}' not found in state")))?;
 
     let live_status = tart_vms
         .iter()
@@ -42,10 +42,7 @@ pub async fn run(
             println!("Repo:      {}", entry.repo);
             println!("Branch:    {}", entry.branch);
             println!("Status:    {}", live_status);
-            println!(
-                "IP:        {}",
-                entry.ip.as_deref().unwrap_or("-")
-            );
+            println!("IP:        {}", entry.ip.as_deref().unwrap_or("-"));
             println!("Worktree:  {}", entry.worktree_path.display());
             println!("Created:   {}", entry.created_at.format("%Y-%m-%d %H:%M"));
             println!("Last used: {}", entry.last_used.format("%Y-%m-%d %H:%M"));

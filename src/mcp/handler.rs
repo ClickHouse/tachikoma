@@ -6,7 +6,9 @@ pub fn handle_initialize(id: Option<serde_json::Value>) -> JsonRpcResponse {
     let result = InitializeResult {
         protocol_version: "2024-11-05".to_string(),
         capabilities: Capabilities {
-            tools: ToolsCapability { list_changed: false },
+            tools: ToolsCapability {
+                list_changed: false,
+            },
         },
         server_info: ServerInfo {
             name: "tachikoma".to_string(),
@@ -112,16 +114,10 @@ pub fn handle_tools_list(id: Option<serde_json::Value>) -> JsonRpcResponse {
         },
     ];
 
-    JsonRpcResponse::success(
-        id,
-        json!({ "tools": serde_json::to_value(tools).unwrap() }),
-    )
+    JsonRpcResponse::success(id, json!({ "tools": serde_json::to_value(tools).unwrap() }))
 }
 
-pub fn handle_unknown_method(
-    id: Option<serde_json::Value>,
-    method: &str,
-) -> JsonRpcResponse {
+pub fn handle_unknown_method(id: Option<serde_json::Value>, method: &str) -> JsonRpcResponse {
     JsonRpcResponse::error(id, -32601, format!("Method not found: {method}"))
 }
 
@@ -146,10 +142,7 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         assert!(!tools.is_empty());
 
-        let names: Vec<&str> = tools
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"spawn"));
         assert!(names.contains(&"exec"));
         assert!(names.contains(&"list"));

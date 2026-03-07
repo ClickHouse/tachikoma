@@ -30,7 +30,9 @@ pub async fn run(
 
     // Ensure worktree exists
     on_status("Preparing worktree...");
-    let worktree_path = orch.ensure_worktree(&repo_root, &branch, &repo_name).await?;
+    let worktree_path = orch
+        .ensure_worktree(&repo_root, &branch, &repo_name)
+        .await?;
 
     // Spawn or reconnect
     on_status("Spawning VM...");
@@ -41,7 +43,17 @@ pub async fn run(
     // Provision if newly created
     if matches!(result, SpawnResult::Created { .. }) {
         on_status("Provisioning VM...");
-        provision_vm(tart, ssh, result.ip(), result.name(), &branch, &repo_root, config, on_status).await?;
+        provision_vm(
+            tart,
+            ssh,
+            result.ip(),
+            result.name(),
+            &branch,
+            &repo_root,
+            config,
+            on_status,
+        )
+        .await?;
     }
 
     // SSH in if interactive

@@ -27,7 +27,10 @@ pub async fn run(mode: OutputMode) -> Result<Vec<CheckResult>> {
                     })
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&data).unwrap_or_default()
+            );
         }
         _ => {
             for r in &results {
@@ -85,11 +88,7 @@ async fn check_git() -> CheckResult {
 }
 
 async fn check_ssh() -> CheckResult {
-    match tokio::process::Command::new("ssh")
-        .arg("-V")
-        .output()
-        .await
-    {
+    match tokio::process::Command::new("ssh").arg("-V").output().await {
         Ok(output) => {
             // ssh -V prints to stderr
             let version = String::from_utf8_lossy(&output.stderr).trim().to_string();

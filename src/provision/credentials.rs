@@ -98,12 +98,7 @@ pub async fn resolve_supplementary_credentials() -> Option<String> {
 
 async fn try_keychain_entry(service: &str) -> Option<String> {
     let output = tokio::process::Command::new("security")
-        .args([
-            "find-generic-password",
-            "-s",
-            service,
-            "-w",
-        ])
+        .args(["find-generic-password", "-s", service, "-w"])
         .output()
         .await
         .ok()?;
@@ -205,9 +200,7 @@ mod tests {
         // the result should be predictable in test environment
         // Just verify it doesn't panic and returns a valid source
         match result {
-            CredentialSource::None
-            | CredentialSource::Keychain(_)
-            | CredentialSource::File(_) => {}
+            CredentialSource::None | CredentialSource::Keychain(_) | CredentialSource::File(_) => {}
             other => panic!("Unexpected credential source: {other:?}"),
         }
     }
@@ -220,7 +213,10 @@ mod tests {
 
         // Should find the env var (unless keychain succeeds first)
         assert!(
-            matches!(result, CredentialSource::Keychain(_) | CredentialSource::EnvVar(_)),
+            matches!(
+                result,
+                CredentialSource::Keychain(_) | CredentialSource::EnvVar(_)
+            ),
             "Expected Keychain or EnvVar, got: {result:?}"
         );
     }
@@ -265,18 +261,44 @@ mod tests {
 
     #[test]
     fn test_credential_source_labels() {
-        assert_eq!(CredentialSource::Keychain("k".into()).label(), "macOS Keychain");
-        assert_eq!(CredentialSource::EnvVar("t".into()).label(), "CLAUDE_CODE_OAUTH_TOKEN env var");
-        assert_eq!(CredentialSource::Command("c".into()).label(), "credential command");
-        assert_eq!(CredentialSource::File("f".into()).label(), "credentials file");
-        assert_eq!(CredentialSource::ApiKey("k".into()).label(), "ANTHROPIC_API_KEY env var");
-        assert_eq!(CredentialSource::ApiKeyCommand("k".into()).label(), "API key command");
         assert_eq!(
-            CredentialSource::ProxyEnv { provider: "bedrock".into(), vars: vec![] }.label(),
+            CredentialSource::Keychain("k".into()).label(),
+            "macOS Keychain"
+        );
+        assert_eq!(
+            CredentialSource::EnvVar("t".into()).label(),
+            "CLAUDE_CODE_OAUTH_TOKEN env var"
+        );
+        assert_eq!(
+            CredentialSource::Command("c".into()).label(),
+            "credential command"
+        );
+        assert_eq!(
+            CredentialSource::File("f".into()).label(),
+            "credentials file"
+        );
+        assert_eq!(
+            CredentialSource::ApiKey("k".into()).label(),
+            "ANTHROPIC_API_KEY env var"
+        );
+        assert_eq!(
+            CredentialSource::ApiKeyCommand("k".into()).label(),
+            "API key command"
+        );
+        assert_eq!(
+            CredentialSource::ProxyEnv {
+                provider: "bedrock".into(),
+                vars: vec![]
+            }
+            .label(),
             "AWS Bedrock"
         );
         assert_eq!(
-            CredentialSource::ProxyEnv { provider: "vertex".into(), vars: vec![] }.label(),
+            CredentialSource::ProxyEnv {
+                provider: "vertex".into(),
+                vars: vec![]
+            }
+            .label(),
             "Google Vertex"
         );
         assert_eq!(CredentialSource::None.label(), "none");

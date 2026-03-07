@@ -127,7 +127,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             .await;
             spinner.finish_and_clear();
             let result = result?;
-            print_success(mode, &format!("VM {} ready at {}", result.name(), result.ip()), None);
+            print_success(
+                mode,
+                &format!("VM {} ready at {}", result.name(), result.ip()),
+                None,
+            );
         }
 
         Some(Command::Enter) => {
@@ -201,7 +205,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             if result.pruned.is_empty() {
                 print_success(mode, "No VMs to prune", None);
             } else {
-                let action = if result.dry_run { "Would prune" } else { "Pruned" };
+                let action = if result.dry_run {
+                    "Would prune"
+                } else {
+                    "Pruned"
+                };
                 for name in &result.pruned {
                     println!("{action}: {name}");
                 }
@@ -219,7 +227,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             }
             ImageAction::Push { name } => {
                 let image = name.as_deref().unwrap_or(&config.base_image);
-                print_success(mode, &format!("Push not yet implemented for '{image}'"), None);
+                print_success(
+                    mode,
+                    &format!("Push not yet implemented for '{image}'"),
+                    None,
+                );
             }
             ImageAction::List => {
                 let images = tachikoma::cmd::image::list(&tart).await?;

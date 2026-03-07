@@ -2,11 +2,7 @@ use crate::state::{StateStore, VmStatus};
 use crate::tart::TartRunner;
 use crate::Result;
 
-pub async fn run(
-    vm_name: &str,
-    tart: &dyn TartRunner,
-    state_store: &dyn StateStore,
-) -> Result<()> {
+pub async fn run(vm_name: &str, tart: &dyn TartRunner, state_store: &dyn StateStore) -> Result<()> {
     tart.stop(vm_name).await?;
 
     let mut state = state_store.load().await?;
@@ -48,9 +44,7 @@ mod tests {
         store.expect_load().returning(move || Ok(state.clone()));
         store
             .expect_save()
-            .withf(|s: &State| {
-                s.vms[0].status == VmStatus::Stopped && s.vms[0].ip.is_none()
-            })
+            .withf(|s: &State| s.vms[0].status == VmStatus::Stopped && s.vms[0].ip.is_none())
             .returning(|_| Ok(()));
 
         let result = run("test-vm", &tart, &store).await;

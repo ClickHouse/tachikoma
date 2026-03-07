@@ -16,12 +16,7 @@ pub trait GitWorktree: Send + Sync {
     async fn current_branch(&self, path: &Path) -> Result<String>;
     async fn find_repo_root(&self, from: &Path) -> Result<PathBuf>;
     async fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>>;
-    async fn create_worktree(
-        &self,
-        repo: &Path,
-        branch: &str,
-        target: &Path,
-    ) -> Result<PathBuf>;
+    async fn create_worktree(&self, repo: &Path, branch: &str, target: &Path) -> Result<PathBuf>;
 }
 
 #[derive(Default)]
@@ -41,7 +36,9 @@ impl GitWorktree for RealGitWorktree {
             .current_dir(path)
             .output()
             .await
-            .map_err(|e| crate::TachikomaError::Git(format!("Failed to get current branch: {e}")))?;
+            .map_err(|e| {
+                crate::TachikomaError::Git(format!("Failed to get current branch: {e}"))
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -78,9 +75,7 @@ impl GitWorktree for RealGitWorktree {
             .current_dir(repo)
             .output()
             .await
-            .map_err(|e| {
-                crate::TachikomaError::Git(format!("Failed to list worktrees: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to list worktrees: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -111,9 +106,7 @@ impl GitWorktree for RealGitWorktree {
             } else if line.starts_with("branch ") {
                 let branch_ref = line.strip_prefix("branch ").unwrap_or("");
                 // Strip refs/heads/ prefix
-                let branch = branch_ref
-                    .strip_prefix("refs/heads/")
-                    .unwrap_or(branch_ref);
+                let branch = branch_ref.strip_prefix("refs/heads/").unwrap_or(branch_ref);
                 current_branch = Some(branch.to_string());
             }
         }
@@ -130,32 +123,19 @@ impl GitWorktree for RealGitWorktree {
         Ok(worktrees)
     }
 
-    async fn create_worktree(
-        &self,
-        repo: &Path,
-        branch: &str,
-        target: &Path,
-    ) -> Result<PathBuf> {
+    async fn create_worktree(&self, repo: &Path, branch: &str, target: &Path) -> Result<PathBuf> {
         // First try to create worktree for existing branch
         let output = tokio::process::Command::new("git")
             .args(["worktree", "add", &target.to_string_lossy(), branch])
             .current_dir(repo)
             .output()
             .await
-            .map_err(|e| {
-                crate::TachikomaError::Git(format!("Failed to create worktree: {e}"))
-            })?;
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to create worktree: {e}")))?;
 
         if !output.status.success() {
             // Try creating with -b for new branch
             let output2 = tokio::process::Command::new("git")
-                .args([
-                    "worktree",
-                    "add",
-                    "-b",
-                    branch,
-                    &target.to_string_lossy(),
-                ])
+                .args(["worktree", "add", "-b", branch, &target.to_string_lossy()])
                 .current_dir(repo)
                 .output()
                 .await

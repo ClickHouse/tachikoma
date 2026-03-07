@@ -27,12 +27,18 @@ pub fn print_success(mode: OutputMode, message: &str, data: Option<serde_json::V
                 "message": message,
                 "data": data,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
         }
         OutputMode::Verbose => {
             eprintln!("[OK] {}", message);
             if let Some(d) = data {
-                eprintln!("[DATA] {}", serde_json::to_string_pretty(&d).unwrap_or_default());
+                eprintln!(
+                    "[DATA] {}",
+                    serde_json::to_string_pretty(&d).unwrap_or_default()
+                );
             }
         }
         OutputMode::Human => {
@@ -60,7 +66,10 @@ pub fn print_error(mode: OutputMode, error: &str) {
                 "success": false,
                 "error": error,
             });
-            println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&output).unwrap_or_default()
+            );
         }
         OutputMode::Verbose => {
             eprintln!("[ERROR] {}", error);
@@ -87,7 +96,10 @@ pub fn print_table(mode: OutputMode, headers: &[&str], rows: &[Vec<String>]) {
                     serde_json::Value::Object(map)
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&data).unwrap_or_default()
+            );
         }
         OutputMode::Verbose | OutputMode::Human => {
             if rows.is_empty() {
