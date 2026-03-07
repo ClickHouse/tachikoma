@@ -109,7 +109,13 @@ pub async fn provision_vm(
         tracing::info!("Injected supplementary credentials (MCP OAuth)");
     }
 
-    // 6. Install Claude, link host config, and complete first-run initialization
+    // 6. Sync gh CLI auth if enabled
+    if config.sync_gh_auth {
+        on_status("Syncing GitHub CLI auth...");
+        inject_gh_auth(tart, vm_name).await;
+    }
+
+    // 7. Install Claude, link host config, and complete first-run initialization
     on_status("Installing Claude Code...");
     install_claude(tart, vm_name).await?;
     on_status("Linking host configuration...");
@@ -371,6 +377,40 @@ async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str) {
     )
     .await
     .ok();
+}
+
+/// Sync the host's gh CLI auth config into the VM.
+/// Reads ~/.config/gh/hosts.yml from the host, injects it into the VM, and installs gh CLI if absent.
+async fn inject_gh_auth(tart: &dyn TartRunner, vm_name: &str) {
+    let hosts_path = match dirs::home_dir() {
+        Some(h) => h.join(".config").join("gh").join("hosts.yml"),
+        None => return,
+    };
+
+    let contents = match tokio::fs::read_to_string(&hosts_path).await {
+        Ok(c) => c,
+        Err(_) => {
+            tracing::debug!("No gh hosts.yml found on host, skipping gh auth sync");
+            return;
+        }
+    };
+
+    let encoded = b64(&contents);
+
+    // Install gh CLI if not present, then inject hosts.yml
+    let cmd = format!(
+        "command -v gh >/dev/null 2>&1 || \
+         (type -p curl >/dev/null || sudo apt-get install -y curl 2>/dev/null; \
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && \
+          echo \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null && \
+          sudo apt-get update -qq 2>/dev/null && sudo apt-get install -y gh 2>/dev/null) || true; \
+         mkdir -p ~/.config/gh && echo {encoded} | base64 -d > ~/.config/gh/hosts.yml && chmod 600 ~/.config/gh/hosts.yml"
+    );
+
+    match tart_exec(tart, vm_name, &cmd).await {
+        Ok(_) => tracing::info!("Synced gh CLI auth into VM"),
+        Err(e) => tracing::warn!("Failed to sync gh auth: {e}"),
+    }
 }
 
 /// Ensure a tachikoma-specific SSH key pair exists on the host, generating one if needed.

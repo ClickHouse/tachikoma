@@ -15,5 +15,6 @@ pub fn default_config() -> PartialConfig {
         prune_after_days: Some(30),
         credential_command: None,
         api_key_command: None,
+        sync_gh_auth: Some(true),
     }
 }

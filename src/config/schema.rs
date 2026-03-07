@@ -16,6 +16,7 @@ pub struct PartialConfig {
     pub prune_after_days: Option<u64>,
     pub credential_command: Option<String>,
     pub api_key_command: Option<String>,
+    pub sync_gh_auth: Option<bool>,
 }
 
 impl PartialConfig {
@@ -34,6 +35,7 @@ impl PartialConfig {
             prune_after_days: other.prune_after_days.or(self.prune_after_days),
             credential_command: other.credential_command.or(self.credential_command),
             api_key_command: other.api_key_command.or(self.api_key_command),
+            sync_gh_auth: other.sync_gh_auth.or(self.sync_gh_auth),
         }
     }
 }
@@ -53,6 +55,8 @@ pub struct Config {
     pub prune_after_days: u64,
     pub credential_command: Option<String>,
     pub api_key_command: Option<String>,
+    /// Sync host's gh CLI auth token into the VM (default: true)
+    pub sync_gh_auth: bool,
 }
 
 impl Config {
@@ -71,6 +75,7 @@ impl Config {
             prune_after_days: p.prune_after_days.unwrap_or(30),
             credential_command: p.credential_command,
             api_key_command: p.api_key_command,
+            sync_gh_auth: p.sync_gh_auth.unwrap_or(true),
         })
     }
 }
@@ -183,6 +188,7 @@ mod tests {
             prune_after_days: Some(7),
             credential_command: Some("echo secret".to_string()),
             api_key_command: Some("echo key".to_string()),
+            sync_gh_auth: Some(true),
         };
         let toml_str = toml::to_string(&original).unwrap();
         let deserialized: PartialConfig = toml::from_str(&toml_str).unwrap();
