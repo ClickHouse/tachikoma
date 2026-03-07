@@ -203,6 +203,26 @@ async fn mount_and_configure_git(
             crate::TachikomaError::Provision(format!("Failed to set git environment: {e}"))
         })?;
 
+    // Set VM hostname to branch slug so shell prompt shows admin@<branch>
+    let hostname: String = branch
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let hostname = if hostname.len() > 63 { hostname[..63].trim_end_matches('-').to_string() } else { hostname };
+    if !hostname.is_empty() {
+        let set_hostname = format!(
+            "sudo hostnamectl set-hostname {hostname} 2>/dev/null || sudo hostname {hostname} 2>/dev/null || true; \
+             grep -q ' {hostname}$' /etc/hosts || echo '127.0.1.1 {hostname}' | sudo tee -a /etc/hosts >/dev/null"
+        );
+        tart_exec(tart, vm_name, &set_hostname).await.ok();
+        tracing::info!("Set VM hostname to '{hostname}'");
+    }
+
     // Mark the directory as safe for git
     tart_exec(
         tart,
