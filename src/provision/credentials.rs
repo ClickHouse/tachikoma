@@ -42,9 +42,9 @@ pub async fn resolve_credentials(
     credential_command: Option<&str>,
     api_key_command: Option<&str>,
 ) -> CredentialSource {
-    // 1. macOS Keychain
-    if let Some(cred) = try_keychain().await {
-        return CredentialSource::Keychain(cred);
+    // 1. macOS Keychain ("Claude Code" entry — contains API key)
+    if let Some(key) = try_keychain_entry("Claude Code").await {
+        return CredentialSource::Keychain(key);
     }
 
     // 2. CLAUDE_CODE_OAUTH_TOKEN env var
@@ -89,12 +89,19 @@ pub async fn resolve_credentials(
     CredentialSource::None
 }
 
-async fn try_keychain() -> Option<String> {
+/// Resolve supplementary credentials (MCP OAuth etc.) that should be injected
+/// alongside the primary auth credential.
+pub async fn resolve_supplementary_credentials() -> Option<String> {
+    // "Claude Code-credentials" contains MCP OAuth tokens etc.
+    try_keychain_entry("Claude Code-credentials").await
+}
+
+async fn try_keychain_entry(service: &str) -> Option<String> {
     let output = tokio::process::Command::new("security")
         .args([
             "find-generic-password",
             "-s",
-            "Claude Code-credentials",
+            service,
             "-w",
         ])
         .output()
@@ -254,5 +261,24 @@ mod tests {
     fn test_credential_source_is_none() {
         assert!(CredentialSource::None.is_none());
         assert!(!CredentialSource::ApiKey("key".into()).is_none());
+    }
+
+    #[test]
+    fn test_credential_source_labels() {
+        assert_eq!(CredentialSource::Keychain("k".into()).label(), "macOS Keychain");
+        assert_eq!(CredentialSource::EnvVar("t".into()).label(), "CLAUDE_CODE_OAUTH_TOKEN env var");
+        assert_eq!(CredentialSource::Command("c".into()).label(), "credential command");
+        assert_eq!(CredentialSource::File("f".into()).label(), "credentials file");
+        assert_eq!(CredentialSource::ApiKey("k".into()).label(), "ANTHROPIC_API_KEY env var");
+        assert_eq!(CredentialSource::ApiKeyCommand("k".into()).label(), "API key command");
+        assert_eq!(
+            CredentialSource::ProxyEnv { provider: "bedrock".into(), vars: vec![] }.label(),
+            "AWS Bedrock"
+        );
+        assert_eq!(
+            CredentialSource::ProxyEnv { provider: "vertex".into(), vars: vec![] }.label(),
+            "Google Vertex"
+        );
+        assert_eq!(CredentialSource::None.label(), "none");
     }
 }

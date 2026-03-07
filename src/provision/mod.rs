@@ -8,7 +8,7 @@ use crate::ssh::SshClient;
 use crate::tart::TartRunner;
 use crate::Result;
 
-use credentials::{resolve_credentials, CredentialSource};
+use credentials::{resolve_credentials, resolve_supplementary_credentials, CredentialSource};
 
 /// Run a command in the VM via tart exec, returning Ok/Err.
 async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<String> {
@@ -82,6 +82,19 @@ pub async fn provision_vm(
     }
 
     inject_credentials(tart, vm_name, &creds).await?;
+
+    // 5b. Inject supplementary credentials (MCP OAuth etc.) if available
+    if let Some(supplementary) = resolve_supplementary_credentials().await {
+        let escaped = supplementary.replace('\'', "'\\''");
+        tart_exec(
+            tart,
+            vm_name,
+            &format!("mkdir -p ~/.claude && echo '{escaped}' > ~/.claude/.credentials.json"),
+        )
+        .await
+        .ok();
+        tracing::info!("Injected supplementary credentials (MCP OAuth)");
+    }
 
     // 6. Install Claude and mark onboarding complete
     install_claude(tart, vm_name).await?;
@@ -307,7 +320,22 @@ async fn inject_credentials(
     creds: &CredentialSource,
 ) -> Result<()> {
     match creds {
-        CredentialSource::Keychain(data) | CredentialSource::File(data) => {
+        CredentialSource::Keychain(key) => {
+            // Keychain "Claude Code" entry contains an API key
+            let escaped = key.replace('\'', "'\\''");
+            tart_exec(
+                tart,
+                vm_name,
+                &format!("echo 'export ANTHROPIC_API_KEY={escaped}' >> ~/.profile"),
+            )
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!(
+                    "Failed to inject keychain API key: {e}"
+                ))
+            })?;
+        }
+        CredentialSource::File(data) => {
             let escaped = data.replace('\'', "'\\''");
             tart_exec(
                 tart,
@@ -419,5 +447,110 @@ mod tests {
         let config = test_config();
         let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", &config).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_inject_keychain_sets_api_key_env() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cmds.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+        });
+
+        let creds = CredentialSource::Keychain("sk-ant-test-key".into());
+        inject_credentials(&tart, "test-vm", &creds).await.unwrap();
+
+        let cmds = commands.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c.contains("ANTHROPIC_API_KEY=sk-ant-test-key")),
+            "Expected ANTHROPIC_API_KEY in profile, got: {cmds:?}"
+        );
+        // Should NOT write to .credentials.json
+        assert!(
+            !cmds.iter().any(|c| c.contains(".credentials.json")),
+            "Keychain API key should not be written to .credentials.json"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_file_writes_credentials_json() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cmds.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+        });
+
+        let creds = CredentialSource::File(r#"{"oauth":"token"}"#.into());
+        inject_credentials(&tart, "test-vm", &creds).await.unwrap();
+
+        let cmds = commands.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c.contains(".credentials.json")),
+            "File creds should write to .credentials.json, got: {cmds:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_api_key_sets_env() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cmds.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+        });
+
+        let creds = CredentialSource::ApiKey("sk-test-123".into());
+        inject_credentials(&tart, "test-vm", &creds).await.unwrap();
+
+        let cmds = commands.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c.contains("ANTHROPIC_API_KEY=sk-test-123")),
+            "Expected ANTHROPIC_API_KEY env, got: {cmds:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_inject_oauth_token_sets_env() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cmds.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput { stdout: String::new(), stderr: String::new(), exit_code: 0 })
+        });
+
+        let creds = CredentialSource::EnvVar("oauth-token-123".into());
+        inject_credentials(&tart, "test-vm", &creds).await.unwrap();
+
+        let cmds = commands.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c.contains("CLAUDE_CODE_OAUTH_TOKEN=oauth-token-123")),
+            "Expected CLAUDE_CODE_OAUTH_TOKEN env, got: {cmds:?}"
+        );
     }
 }
