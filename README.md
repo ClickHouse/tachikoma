@@ -37,8 +37,9 @@ tachikoma spawn
 8. Sets VM hostname to branch slug (e.g. `admin@feature-ui-button`)
 9. Resolves credentials (keychain, env vars, files, commands) and injects them via base64 encoding
 10. Installs Claude Code, skips onboarding wizard, and injects cleaned host `settings.json`
-11. Runs any provisioning scripts (warns for repo-level scripts)
-12. Drops you into an interactive SSH session
+11. Syncs `gh` CLI auth from host if `sync_gh_auth = true`
+12. Runs any provisioning scripts (warns for repo-level scripts)
+13. Drops you into an interactive SSH session
 
 ## Commands
 
@@ -89,6 +90,9 @@ prune_after_days = 30           # Auto-prune threshold
 
 # Additional provisioning scripts to run in the VM
 # provision_scripts = ["setup.sh"]
+
+# Sync host's gh CLI auth (~/.config/gh/hosts.yml) into VM (opt-in)
+# sync_gh_auth = true
 
 # Custom credential resolution
 # credential_command = "op read op://vault/claude/credential"

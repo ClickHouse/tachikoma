@@ -189,6 +189,7 @@ Merge: `PartialConfig` uses `Option<T>` for all fields. `other.field.or(self.fie
 | `ssh_port` | `22` |
 | `boot_timeout_secs` | `120` |
 | `prune_after_days` | `30` |
+| `sync_gh_auth` | `false` |
 
 ---
 
@@ -282,6 +283,7 @@ DirMount                         ProxyEnv { provider, vars }
 | `python3 -c ...` | Patch `~/.claude.json` (hasCompletedOnboarding) |
 | `git config --global ...` | Set git identity + safe.directory |
 | `ln -sf /mnt/tachikoma/claude-* ~/.claude/` | Symlink host Claude config directories |
+| `apt-get install gh` + `echo <b64> \| base64 -d > ~/.config/gh/hosts.yml` | Install gh CLI + inject host auth (if `sync_gh_auth = true`) |
 
 ---
 
@@ -297,6 +299,8 @@ DirMount                         ProxyEnv { provider, vars }
 | `~/.config/tachikoma/state.json` | JSON | VM state |
 | `~/.ssh/tachikoma.pub` | text | SSH public key |
 | `~/.claude/.credentials.json` | JSON | Credential waterfall source 4 |
+| `~/.claude/settings.json` | JSON | Stripped + injected into VM |
+| `~/.config/gh/hosts.yml` | YAML | gh CLI auth (if `sync_gh_auth = true`) |
 | `**/profiles/*.sh` | shell | Provisioning scripts |
 
 ### Host Files Written
