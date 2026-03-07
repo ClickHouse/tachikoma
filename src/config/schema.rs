@@ -55,7 +55,7 @@ pub struct Config {
     pub prune_after_days: u64,
     pub credential_command: Option<String>,
     pub api_key_command: Option<String>,
-    /// Sync host's gh CLI auth token into the VM (default: true)
+    /// Sync host's gh CLI auth token into the VM (default: false)
     pub sync_gh_auth: bool,
 }
 
@@ -75,7 +75,7 @@ impl Config {
             prune_after_days: p.prune_after_days.unwrap_or(30),
             credential_command: p.credential_command,
             api_key_command: p.api_key_command,
-            sync_gh_auth: p.sync_gh_auth.unwrap_or(true),
+            sync_gh_auth: p.sync_gh_auth.unwrap_or(false),
         })
     }
 }
