@@ -1,4 +1,5 @@
 use clap::{CommandFactory, Parser};
+use indicatif::{ProgressBar, ProgressStyle};
 use tachikoma::cli::output::{print_error, print_success, OutputMode};
 use tachikoma::cli::{Cli, Command, ImageAction, SshAction};
 use tachikoma::config::{ConfigLoader, FileConfigLoader};
@@ -47,6 +48,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
         // No subcommand: zero-arg spawn (or branch shorthand)
         None => {
             let branch = cli.branch.as_deref();
+            let spinner = make_spinner(mode);
             let result = tachikoma::cmd::spawn::run(
                 branch,
                 &cwd,
@@ -56,8 +58,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 &state_store,
                 &config,
                 true, // interactive
+                &|msg: &str| spinner.set_message(msg.to_owned()),
             )
-            .await?;
+            .await;
+            spinner.finish_and_clear();
+            let result = result?;
 
             match &result {
                 tachikoma::vm::SpawnResult::Reconnected { name, ip } => {
@@ -76,6 +81,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
         }
 
         Some(Command::Spawn { branch }) => {
+            let spinner = make_spinner(mode);
             let result = tachikoma::cmd::spawn::run(
                 branch.as_deref(),
                 &cwd,
@@ -85,8 +91,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 &state_store,
                 &config,
                 true,
+                &|msg: &str| spinner.set_message(msg.to_owned()),
             )
-            .await?;
+            .await;
+            spinner.finish_and_clear();
+            let result = result?;
             print_success(mode, &format!("VM {} ready at {}", result.name(), result.ip()), None);
         }
 
@@ -223,6 +232,20 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
     }
 
     Ok(())
+}
+
+fn make_spinner(mode: OutputMode) -> ProgressBar {
+    if mode == OutputMode::Json {
+        return ProgressBar::hidden();
+    }
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.cyan} {msg}")
+            .unwrap(),
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
+    pb
 }
 
 async fn resolve_repo(

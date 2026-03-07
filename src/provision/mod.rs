@@ -8,7 +8,13 @@ use crate::ssh::SshClient;
 use crate::tart::TartRunner;
 use crate::Result;
 
+use base64::Engine;
 use credentials::{resolve_credentials, resolve_supplementary_credentials, CredentialSource};
+
+/// Encode a value as base64, suitable for safe shell injection via `echo <b64> | base64 -d`.
+fn b64(data: &str) -> String {
+    base64::engine::general_purpose::STANDARD.encode(data.as_bytes())
+}
 
 /// Run a command in the VM via tart exec, returning Ok/Err.
 async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<String> {
@@ -36,21 +42,27 @@ async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<St
 
 /// Provision a freshly booted VM with SSH keys, credentials, git config, and Claude setup.
 /// Uses tart exec for initial provisioning (SSH isn't available until keys are injected).
+#[allow(clippy::too_many_arguments)]
 pub async fn provision_vm(
     tart: &dyn TartRunner,
     ssh: &dyn SshClient,
     ip: IpAddr,
     vm_name: &str,
     branch: &str,
+    repo_root: &std::path::Path,
     config: &Config,
+    on_status: &dyn Fn(&str),
 ) -> Result<()> {
     // 1. Inject host SSH public key so SSH works for subsequent connections
+    on_status("Injecting SSH keys...");
     inject_ssh_key(tart, vm_name, &config.ssh_user).await?;
 
     // 2. Mount virtiofs shares and set up git environment
+    on_status("Mounting shared directories...");
     mount_and_configure_git(tart, vm_name, branch).await?;
 
     // 3. Set TACHIKOMA=1 in shell profile
+    on_status("Configuring environment...");
     tart_exec(tart, vm_name, "echo 'export TACHIKOMA=1' >> ~/.profile")
         .await
         .map_err(|e| {
@@ -70,6 +82,7 @@ pub async fn provision_vm(
     .ok();
 
     // 5. Resolve and inject credentials
+    on_status("Injecting credentials...");
     let creds = resolve_credentials(
         config.credential_command.as_deref(),
         config.api_key_command.as_deref(),
@@ -85,21 +98,25 @@ pub async fn provision_vm(
 
     // 5b. Inject supplementary credentials (MCP OAuth etc.) if available
     if let Some(supplementary) = resolve_supplementary_credentials().await {
-        let escaped = supplementary.replace('\'', "'\\''");
+        let encoded = b64(&supplementary);
         tart_exec(
             tart,
             vm_name,
-            &format!("mkdir -p ~/.claude && echo '{escaped}' > ~/.claude/.credentials.json"),
+            &format!("mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"),
         )
         .await
         .ok();
         tracing::info!("Injected supplementary credentials (MCP OAuth)");
     }
 
-    // 6. Install Claude and mark onboarding complete
+    // 6. Install Claude, link host config, and complete first-run initialization
+    on_status("Installing Claude Code...");
     install_claude(tart, vm_name).await?;
+    on_status("Linking host configuration...");
+    link_host_claude_config(tart, vm_name, repo_root).await;
 
     // 7. Run profile scripts
+    on_status("Running provisioning scripts...");
     let config_dir = crate::state::FileStateStore::default_path();
     let profiles = profile::discover_profiles(
         &config_dir,
@@ -127,6 +144,7 @@ pub async fn provision_vm(
     }
 
     // 7. Verify SSH connectivity now works
+    on_status("Verifying SSH connectivity...");
     let user = &config.ssh_user;
     if let Err(e) = ssh.check_connection(ip, user).await {
         tracing::warn!("SSH verification failed after provisioning: {e}");
@@ -198,17 +216,8 @@ async fn mount_and_configure_git(
     Ok(())
 }
 
-/// Install Claude Code in the VM.
+/// Install Claude Code in the VM and replicate host settings.
 async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
-    // Mark onboarding complete first
-    tart_exec(
-        tart,
-        vm_name,
-        "mkdir -p ~/.claude && echo '{\"completedOnboarding\": true}' > ~/.claude/settings.local.json",
-    )
-    .await
-    .ok();
-
     // Install Claude (script requires bash, not dash/sh)
     tart_exec(
         tart,
@@ -220,13 +229,137 @@ async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
         crate::TachikomaError::Provision(format!("Failed to install Claude: {e}"))
     })?;
 
-    // Verify installation (~/.local/bin/claude is the default install location)
+    // Verify installation and complete first-run initialization.
+    // Running a non-interactive command creates Claude's runtime state files
+    // so the interactive TUI doesn't show a first-run/login screen.
     match tart_exec(tart, vm_name, "~/.local/bin/claude --version").await {
         Ok(version) => tracing::info!("Claude installed: {}", version.trim()),
         Err(e) => tracing::warn!("Claude install verification failed: {e}"),
     }
+    // Source ~/.profile to pick up ANTHROPIC_API_KEY, then run a non-interactive
+    // command to complete first-run initialization and verify auth works.
+    tart_exec(
+        tart,
+        vm_name,
+        "source ~/.profile && ~/.local/bin/claude -p 'respond with ok' --dangerously-skip-permissions 2>/dev/null || true",
+    )
+    .await
+    .ok();
+
+    // Mark onboarding as complete in ~/.claude.json so the interactive TUI
+    // doesn't show the welcome/theme-picker wizard on first launch.
+    // The claude -p run above creates ~/.claude.json but doesn't set these flags.
+    tart_exec(
+        tart,
+        vm_name,
+        r#"python3 -c "
+import json, os
+p = os.path.expanduser('~/.claude.json')
+d = {}
+if os.path.exists(p):
+    with open(p) as f: d = json.load(f)
+d['hasCompletedOnboarding'] = True
+d['numStartups'] = d.get('numStartups', 0) + 1
+with open(p, 'w') as f: json.dump(d, f)
+""#,
+    )
+    .await
+    .ok();
 
     Ok(())
+}
+
+/// Symlink mounted host Claude subdirectories into the VM's ~/.claude.
+/// Only safe, non-sensitive directories are mounted (rules, agents, plugins, skills, project memory).
+async fn link_host_claude_config(
+    tart: &dyn TartRunner,
+    vm_name: &str,
+    repo_root: &std::path::Path,
+) {
+    tart_exec(tart, vm_name, "mkdir -p ~/.claude").await.ok();
+
+    // Each subdir is mounted as its own virtiofs share: /mnt/tachikoma/claude-<name>
+    for subdir in ["rules", "agents", "plugins", "skills"] {
+        let mount = format!("/mnt/tachikoma/claude-{subdir}");
+        tart_exec(
+            tart,
+            vm_name,
+            &format!("[ -d {mount} ] && ln -sf {mount} ~/.claude/{subdir}"),
+        )
+        .await
+        .ok();
+    }
+
+    // Symlink project memory (MEMORY.md) if mounted.
+    // Claude Code stores project data at ~/.claude/projects/<slug>/ where
+    // <slug> is the repo root path with / replaced by - (e.g. -Users-rahul-projects-foo).
+    let project_slug = repo_root.to_string_lossy().replace('/', "-");
+    let project_dir = format!("~/.claude/projects/{project_slug}");
+    tart_exec(
+        tart,
+        vm_name,
+        &format!(
+            "if [ -d /mnt/tachikoma/claude-memory ]; then \
+                mkdir -p {project_dir} && \
+                ln -sf /mnt/tachikoma/claude-memory {project_dir}/memory; \
+            fi"
+        ),
+    )
+    .await
+    .ok();
+
+    // Inject host settings.json (read from host filesystem, not mount, since
+    // settings.json contains fields we need to strip before writing).
+    inject_host_claude_settings(tart, vm_name).await;
+
+    tracing::info!("Linked host Claude config into VM");
+}
+
+/// Read host's ~/.claude/settings.json, strip host-specific fields, inject into VM.
+async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str) {
+    let settings_path = match dirs::home_dir() {
+        Some(h) => h.join(".claude").join("settings.json"),
+        None => return,
+    };
+
+    let contents = match tokio::fs::read_to_string(&settings_path).await {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let cleaned = match serde_json::from_str::<serde_json::Value>(&contents) {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("hooks");
+                obj.remove("statusLine");
+                if let Some(perms) = obj.get_mut("permissions") {
+                    if let Some(deny) = perms.get_mut("deny") {
+                        if let Some(arr) = deny.as_array_mut() {
+                            arr.retain(|v| {
+                                v.as_str()
+                                    .map(|s| !s.contains("~/Library/"))
+                                    .unwrap_or(true)
+                            });
+                        }
+                    }
+                }
+            }
+            match serde_json::to_string(&v) {
+                Ok(s) => s,
+                Err(_) => return,
+            }
+        }
+        Err(_) => return,
+    };
+
+    let encoded = b64(&cleaned);
+    tart_exec(
+        tart,
+        vm_name,
+        &format!("echo {encoded} | base64 -d > ~/.claude/settings.json"),
+    )
+    .await
+    .ok();
 }
 
 /// Ensure a tachikoma-specific SSH key pair exists on the host, generating one if needed.
@@ -314,6 +447,25 @@ async fn inject_ssh_key(tart: &dyn TartRunner, vm_name: &str, user: &str) -> Res
     Ok(())
 }
 
+/// Inject a line into ~/.profile using base64 encoding to avoid shell escaping issues.
+async fn inject_profile_line(tart: &dyn TartRunner, vm_name: &str, line: &str) -> Result<()> {
+    let encoded = b64(line);
+    tart_exec(
+        tart,
+        vm_name,
+        &format!("echo {encoded} | base64 -d >> ~/.profile"),
+    )
+    .await
+    .map(|_| ())
+}
+
+/// Validate that an env var name contains only safe characters (A-Z, 0-9, _).
+fn is_valid_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && !name.as_bytes()[0].is_ascii_digit()
+}
+
 async fn inject_credentials(
     tart: &dyn TartRunner,
     vm_name: &str,
@@ -321,26 +473,20 @@ async fn inject_credentials(
 ) -> Result<()> {
     match creds {
         CredentialSource::Keychain(key) => {
-            // Keychain "Claude Code" entry contains an API key
-            let escaped = key.replace('\'', "'\\''");
-            tart_exec(
-                tart,
-                vm_name,
-                &format!("echo 'export ANTHROPIC_API_KEY={escaped}' >> ~/.profile"),
-            )
-            .await
-            .map_err(|e| {
-                crate::TachikomaError::Provision(format!(
-                    "Failed to inject keychain API key: {e}"
-                ))
-            })?;
+            inject_profile_line(tart, vm_name, &format!("export ANTHROPIC_API_KEY={key}\n"))
+                .await
+                .map_err(|e| {
+                    crate::TachikomaError::Provision(format!(
+                        "Failed to inject keychain API key: {e}"
+                    ))
+                })?;
         }
         CredentialSource::File(data) => {
-            let escaped = data.replace('\'', "'\\''");
+            let encoded = b64(data);
             tart_exec(
                 tart,
                 vm_name,
-                &format!("mkdir -p ~/.claude && echo '{escaped}' > ~/.claude/.credentials.json"),
+                &format!("mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"),
             )
             .await
             .map_err(|e| {
@@ -350,43 +496,32 @@ async fn inject_credentials(
             })?;
         }
         CredentialSource::EnvVar(token) | CredentialSource::Command(token) => {
-            let escaped = token.replace('\'', "'\\''");
-            tart_exec(
-                tart,
-                vm_name,
-                &format!("echo 'export CLAUDE_CODE_OAUTH_TOKEN={escaped}' >> ~/.profile"),
-            )
-            .await
-            .map_err(|e| {
-                crate::TachikomaError::Provision(format!(
-                    "Failed to inject OAuth token: {e}"
-                ))
-            })?;
+            inject_profile_line(tart, vm_name, &format!("export CLAUDE_CODE_OAUTH_TOKEN={token}\n"))
+                .await
+                .map_err(|e| {
+                    crate::TachikomaError::Provision(format!(
+                        "Failed to inject OAuth token: {e}"
+                    ))
+                })?;
         }
         CredentialSource::ApiKey(key) | CredentialSource::ApiKeyCommand(key) => {
-            let escaped = key.replace('\'', "'\\''");
-            tart_exec(
-                tart,
-                vm_name,
-                &format!("echo 'export ANTHROPIC_API_KEY={escaped}' >> ~/.profile"),
-            )
-            .await
-            .map_err(|e| {
-                crate::TachikomaError::Provision(format!(
-                    "Failed to inject API key: {e}"
-                ))
-            })?;
+            inject_profile_line(tart, vm_name, &format!("export ANTHROPIC_API_KEY={key}\n"))
+                .await
+                .map_err(|e| {
+                    crate::TachikomaError::Provision(format!(
+                        "Failed to inject API key: {e}"
+                    ))
+                })?;
         }
         CredentialSource::ProxyEnv { vars, .. } => {
             for (key, value) in vars {
-                let escaped_val = value.replace('\'', "'\\''");
-                tart_exec(
-                    tart,
-                    vm_name,
-                    &format!("echo 'export {key}={escaped_val}' >> ~/.profile"),
-                )
-                .await
-                .ok();
+                if !is_valid_env_name(key) {
+                    tracing::warn!("Skipping invalid env var name: {key}");
+                    continue;
+                }
+                inject_profile_line(tart, vm_name, &format!("export {key}={value}\n"))
+                    .await
+                    .ok();
             }
         }
         CredentialSource::None => {
@@ -404,6 +539,7 @@ mod tests {
     use crate::tart::types::ExecOutput;
     use crate::tart::MockTartRunner;
     use std::net::Ipv4Addr;
+    use std::path::Path;
 
     fn test_config() -> Config {
         Config::from_partial(PartialConfig::default()).unwrap()
@@ -430,7 +566,7 @@ mod tests {
         ssh.expect_check_connection().returning(|_, _| Ok(true));
 
         let config = test_config();
-        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", &config).await;
+        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", Path::new("/tmp/repo"), &config, &|_| {}).await;
         assert!(result.is_ok());
     }
 
@@ -445,7 +581,7 @@ mod tests {
             .returning(|_, _| Err(crate::TachikomaError::Ssh("connection refused".into())));
 
         let config = test_config();
-        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", &config).await;
+        let result = provision_vm(&tart, &ssh, ip, "test-vm", "main", Path::new("/tmp/repo"), &config, &|_| {}).await;
         assert!(result.is_ok());
     }
 
@@ -468,11 +604,11 @@ mod tests {
         inject_credentials(&tart, "test-vm", &creds).await.unwrap();
 
         let cmds = commands.lock().unwrap();
+        // Credentials are now base64-encoded for shell safety
         assert!(
-            cmds.iter().any(|c| c.contains("ANTHROPIC_API_KEY=sk-ant-test-key")),
-            "Expected ANTHROPIC_API_KEY in profile, got: {cmds:?}"
+            cmds.iter().any(|c| c.contains("base64 -d >> ~/.profile")),
+            "Expected base64 profile injection, got: {cmds:?}"
         );
-        // Should NOT write to .credentials.json
         assert!(
             !cmds.iter().any(|c| c.contains(".credentials.json")),
             "Keychain API key should not be written to .credentials.json"
@@ -524,8 +660,8 @@ mod tests {
 
         let cmds = commands.lock().unwrap();
         assert!(
-            cmds.iter().any(|c| c.contains("ANTHROPIC_API_KEY=sk-test-123")),
-            "Expected ANTHROPIC_API_KEY env, got: {cmds:?}"
+            cmds.iter().any(|c| c.contains("base64 -d >> ~/.profile")),
+            "Expected base64 profile injection, got: {cmds:?}"
         );
     }
 
@@ -549,8 +685,31 @@ mod tests {
 
         let cmds = commands.lock().unwrap();
         assert!(
-            cmds.iter().any(|c| c.contains("CLAUDE_CODE_OAUTH_TOKEN=oauth-token-123")),
-            "Expected CLAUDE_CODE_OAUTH_TOKEN env, got: {cmds:?}"
+            cmds.iter().any(|c| c.contains("base64 -d >> ~/.profile")),
+            "Expected base64 profile injection, got: {cmds:?}"
         );
+    }
+
+    #[test]
+    fn test_is_valid_env_name() {
+        assert!(is_valid_env_name("AWS_REGION"));
+        assert!(is_valid_env_name("ANTHROPIC_API_KEY"));
+        assert!(is_valid_env_name("A"));
+        assert!(!is_valid_env_name(""));
+        assert!(!is_valid_env_name("0START"));
+        assert!(!is_valid_env_name("has space"));
+        assert!(!is_valid_env_name("lower"));
+        assert!(!is_valid_env_name("key=value"));
+        assert!(!is_valid_env_name("key;rm -rf /"));
+    }
+
+    #[test]
+    fn test_b64_roundtrip() {
+        let input = "export ANTHROPIC_API_KEY=sk-test'with\"special\nchars\n";
+        let encoded = b64(input);
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        assert_eq!(String::from_utf8(decoded).unwrap(), input);
     }
 }

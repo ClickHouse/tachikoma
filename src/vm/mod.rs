@@ -128,6 +128,7 @@ impl<'a> VmOrchestrator<'a> {
         repo_name: &str,
         worktree_path: &Path,
         repo_root: &Path,
+        on_status: &dyn Fn(&str),
     ) -> Result<SpawnResult> {
         let vm_name = crate::vm_name(repo_name, branch);
         tracing::info!("VM name: {vm_name}");
@@ -142,6 +143,7 @@ impl<'a> VmOrchestrator<'a> {
         match tart_state {
             Some(TartVmState::Running) => {
                 // Already running — get IP and verify SSH
+                on_status("Connecting to running VM...");
                 tracing::info!("VM '{vm_name}' is already running");
                 let ip = self.get_ip_or_wait(&vm_name).await?;
                 self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
@@ -150,9 +152,11 @@ impl<'a> VmOrchestrator<'a> {
             }
             Some(TartVmState::Suspended) => {
                 // Suspended — resume
+                on_status("Resuming suspended VM...");
                 tracing::info!("Resuming suspended VM '{vm_name}'");
                 let opts = self.build_run_opts(worktree_path, repo_root);
                 self.tart.run(&vm_name, &opts).await?;
+                on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
                 self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
                     .await?;
@@ -160,9 +164,11 @@ impl<'a> VmOrchestrator<'a> {
             }
             Some(TartVmState::Stopped) => {
                 // Stopped — start
+                on_status("Starting stopped VM...");
                 tracing::info!("Starting stopped VM '{vm_name}'");
                 let opts = self.build_run_opts(worktree_path, repo_root);
                 self.tart.run(&vm_name, &opts).await?;
+                on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
                 self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
                     .await?;
@@ -170,12 +176,15 @@ impl<'a> VmOrchestrator<'a> {
             }
             Some(TartVmState::Unknown) | None => {
                 // Not found — clone and create
+                on_status(&format!("Cloning base image '{}'...", self.config.base_image));
                 tracing::info!("Creating new VM '{vm_name}' from '{}'", self.config.base_image);
                 self.tart
                     .clone_vm(&self.config.base_image, &vm_name)
                     .await?;
                 let opts = self.build_run_opts(worktree_path, repo_root);
+                on_status("Starting VM...");
                 self.tart.run(&vm_name, &opts).await?;
+                on_status("Waiting for boot...");
                 let ip = self.wait_boot(&vm_name).await?;
                 self.update_state(&vm_name, repo_name, branch, worktree_path, VmStatus::Running, Some(ip))
                     .await?;
@@ -201,6 +210,40 @@ impl<'a> VmOrchestrator<'a> {
                 host_path: git_dir,
                 read_only: true,
             });
+        }
+
+        // Mount individual safe subdirectories from ~/.claude read-only.
+        // We avoid mounting all of ~/.claude because it contains sensitive data
+        // (history.jsonl, projects/, debug/, file-history/).
+        if let Some(claude_dir) = dirs::home_dir().map(|h| h.join(".claude")) {
+            for subdir in ["rules", "agents", "plugins", "skills"] {
+                let path = claude_dir.join(subdir);
+                if path.exists() {
+                    dirs.push(DirMount {
+                        name: Some(format!("claude-{subdir}")),
+                        host_path: path,
+                        read_only: true,
+                    });
+                }
+            }
+
+            // Mount current project's memory/ directory (not the whole project dir,
+            // which contains sensitive conversation transcripts in .jsonl files).
+            // Claude Code uses the path slug: /a/b/c → -a-b-c
+            let project_slug = repo_root
+                .to_string_lossy()
+                .replace('/', "-");
+            let memory_dir = claude_dir
+                .join("projects")
+                .join(&project_slug)
+                .join("memory");
+            if memory_dir.exists() {
+                dirs.push(DirMount {
+                    name: Some("claude-memory".into()),
+                    host_path: memory_dir,
+                    read_only: true,
+                });
+            }
         }
 
         RunOpts {
@@ -229,6 +272,8 @@ impl<'a> VmOrchestrator<'a> {
         wait_for_boot(self.tart, self.ssh, vm_name, &boot_config).await
     }
 
+    // Note: load+save is not atomic across the lock boundary, but this is acceptable
+    // for a single-user CLI tool where concurrent VM spawns to the same state file are rare.
     async fn update_state(
         &self,
         vm_name: &str,
@@ -326,7 +371,7 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"))
+            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
             .await
             .unwrap();
 
@@ -358,7 +403,7 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"))
+            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
             .await
             .unwrap();
 
@@ -390,7 +435,7 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("feat", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"))
+            .spawn("feat", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
             .await
             .unwrap();
 
@@ -422,7 +467,7 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("dev", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"))
+            .spawn("dev", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
             .await
             .unwrap();
 
@@ -487,7 +532,7 @@ mod tests {
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
 
         let result = orch
-            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"))
+            .spawn("main", "myrepo", Path::new("/tmp/wt"), Path::new("/tmp/repo"), &|_| {})
             .await;
         assert!(result.is_ok());
     }

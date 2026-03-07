@@ -19,24 +19,29 @@ pub async fn run(
     state_store: &dyn StateStore,
     config: &Config,
     interactive: bool,
+    on_status: &dyn Fn(&str),
 ) -> Result<SpawnResult> {
     let orch = VmOrchestrator::new(tart, ssh, git, state_store, config);
 
     // Resolve branch and repo
+    on_status("Resolving branch...");
     let branch = orch.resolve_branch(branch, cwd).await?;
     let (repo_name, repo_root) = orch.resolve_repo(cwd).await?;
 
     // Ensure worktree exists
+    on_status("Preparing worktree...");
     let worktree_path = orch.ensure_worktree(&repo_root, &branch, &repo_name).await?;
 
     // Spawn or reconnect
+    on_status("Spawning VM...");
     let result = orch
-        .spawn(&branch, &repo_name, &worktree_path, &repo_root)
+        .spawn(&branch, &repo_name, &worktree_path, &repo_root, on_status)
         .await?;
 
     // Provision if newly created
     if matches!(result, SpawnResult::Created { .. }) {
-        provision_vm(tart, ssh, result.ip(), result.name(), &branch, config).await?;
+        on_status("Provisioning VM...");
+        provision_vm(tart, ssh, result.ip(), result.name(), &branch, &repo_root, config, on_status).await?;
     }
 
     // SSH in if interactive
@@ -113,6 +118,7 @@ mod tests {
             &state_store,
             &config,
             false,
+            &|_| {},
         )
         .await
         .unwrap();
