@@ -42,8 +42,8 @@ pub async fn wait_for_boot(
     // Phase 1: Wait for IP
     let ip = poll_for_ip(tart, vm_name, config, deadline).await?;
 
-    // Phase 2: Wait for SSH
-    poll_for_ssh(ssh, ip, &config.ssh_user, config, deadline).await?;
+    // Phase 2: Wait for SSH port to be reachable (not auth — keys are injected during provisioning)
+    poll_for_ssh_port(ssh, ip, config, deadline).await?;
 
     Ok(ip)
 }
@@ -83,10 +83,9 @@ async fn poll_for_ip(
     }
 }
 
-async fn poll_for_ssh(
+async fn poll_for_ssh_port(
     ssh: &dyn SshClient,
     ip: IpAddr,
-    user: &str,
     config: &BootConfig,
     deadline: tokio::time::Instant,
 ) -> Result<()> {
@@ -101,16 +100,16 @@ async fn poll_for_ssh(
 
         tokio::time::sleep(delay).await;
 
-        match ssh.check_connection(ip, user).await {
+        match ssh.check_port_open(ip).await {
             Ok(true) => {
-                tracing::debug!("SSH connection to {ip} established");
+                tracing::debug!("SSH port open on {ip}");
                 return Ok(());
             }
             Ok(false) => {
-                tracing::trace!("SSH not ready on {ip}, retrying...");
+                tracing::trace!("SSH port not open on {ip}, retrying...");
             }
             Err(e) => {
-                tracing::trace!("SSH check error on {ip}: {e}");
+                tracing::trace!("SSH port check error on {ip}: {e}");
             }
         }
 
@@ -138,8 +137,8 @@ mod tests {
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh
-            .expect_check_connection()
-            .returning(|_, _| Ok(true));
+            .expect_check_port_open()
+            .returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -169,8 +168,8 @@ mod tests {
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh
-            .expect_check_connection()
-            .returning(|_, _| Ok(true));
+            .expect_check_port_open()
+            .returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -195,8 +194,8 @@ mod tests {
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh
-            .expect_check_connection()
-            .returning(move |_, _| {
+            .expect_check_port_open()
+            .returning(move |_| {
                 let count = ssh_count.fetch_add(1, Ordering::SeqCst);
                 Ok(count >= 2)
             });
@@ -243,8 +242,8 @@ mod tests {
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh
-            .expect_check_connection()
-            .returning(|_, _| Ok(false));
+            .expect_check_port_open()
+            .returning(|_| Ok(false));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),
@@ -277,8 +276,8 @@ mod tests {
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh
-            .expect_check_connection()
-            .returning(|_, _| Ok(true));
+            .expect_check_port_open()
+            .returning(|_| Ok(true));
 
         let config = BootConfig {
             initial_delay: Duration::from_millis(10),

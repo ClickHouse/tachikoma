@@ -187,6 +187,7 @@ impl<'a> VmOrchestrator<'a> {
     fn build_run_opts(&self, worktree_path: &Path, repo_root: &Path) -> RunOpts {
         let mut dirs = vec![
             DirMount {
+                name: Some("code".into()),
                 host_path: worktree_path.to_path_buf(),
                 read_only: true,
             },
@@ -196,6 +197,7 @@ impl<'a> VmOrchestrator<'a> {
         let git_dir = repo_root.join(".git");
         if git_dir.exists() {
             dirs.push(DirMount {
+                name: Some("dotgit".into()),
                 host_path: git_dir,
                 read_only: true,
             });
@@ -344,7 +346,7 @@ mod tests {
         tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
-        ssh.expect_check_connection().returning(|_, _| Ok(true));
+        ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let git = MockGitWorktree::new();
 
@@ -376,7 +378,7 @@ mod tests {
         tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
-        ssh.expect_check_connection().returning(|_, _| Ok(true));
+        ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let git = MockGitWorktree::new();
 
@@ -408,7 +410,7 @@ mod tests {
         tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
-        ssh.expect_check_connection().returning(|_, _| Ok(true));
+        ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let git = MockGitWorktree::new();
 
@@ -468,7 +470,7 @@ mod tests {
         tart.expect_ip().returning(move |_| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
-        ssh.expect_check_connection().returning(|_, _| Ok(true));
+        ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let git = MockGitWorktree::new();
 

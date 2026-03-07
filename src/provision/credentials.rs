@@ -18,6 +18,23 @@ impl CredentialSource {
     pub fn is_none(&self) -> bool {
         matches!(self, CredentialSource::None)
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            CredentialSource::Keychain(_) => "macOS Keychain",
+            CredentialSource::EnvVar(_) => "CLAUDE_CODE_OAUTH_TOKEN env var",
+            CredentialSource::Command(_) => "credential command",
+            CredentialSource::File(_) => "credentials file",
+            CredentialSource::ApiKey(_) => "ANTHROPIC_API_KEY env var",
+            CredentialSource::ApiKeyCommand(_) => "API key command",
+            CredentialSource::ProxyEnv { provider, .. } => match provider.as_str() {
+                "bedrock" => "AWS Bedrock",
+                "vertex" => "Google Vertex",
+                _ => "proxy",
+            },
+            CredentialSource::None => "none",
+        }
+    }
 }
 
 /// Credential waterfall: try each source in priority order, return first match.

@@ -64,18 +64,24 @@ impl Default for RunOpts {
 
 #[derive(Debug, Clone)]
 pub struct DirMount {
+    pub name: Option<String>,
     pub host_path: PathBuf,
     pub read_only: bool,
 }
 
 impl DirMount {
-    /// Format as tart --dir argument: "/path:ro" or "/path"
+    /// Format as tart --dir argument: "name:path:ro", "name:path", "path:ro", or "path"
     pub fn to_tart_arg(&self) -> String {
-        if self.read_only {
-            format!("{}:ro", self.host_path.display())
-        } else {
-            format!("{}", self.host_path.display())
+        let mut parts = String::new();
+        if let Some(ref name) = self.name {
+            parts.push_str(name);
+            parts.push(':');
         }
+        parts.push_str(&self.host_path.display().to_string());
+        if self.read_only {
+            parts.push_str(":ro");
+        }
+        parts
     }
 }
 
@@ -137,16 +143,35 @@ mod tests {
     #[test]
     fn test_dir_mount_to_tart_arg() {
         let ro_mount = DirMount {
+            name: None,
             host_path: PathBuf::from("/tmp/shared"),
             read_only: true,
         };
         assert_eq!(ro_mount.to_tart_arg(), "/tmp/shared:ro");
 
         let rw_mount = DirMount {
+            name: None,
             host_path: PathBuf::from("/tmp/shared"),
             read_only: false,
         };
         assert_eq!(rw_mount.to_tart_arg(), "/tmp/shared");
+    }
+
+    #[test]
+    fn test_dir_mount_named_to_tart_arg() {
+        let named_ro = DirMount {
+            name: Some("code".into()),
+            host_path: PathBuf::from("/tmp/repo"),
+            read_only: true,
+        };
+        assert_eq!(named_ro.to_tart_arg(), "code:/tmp/repo:ro");
+
+        let named_rw = DirMount {
+            name: Some("data".into()),
+            host_path: PathBuf::from("/tmp/data"),
+            read_only: false,
+        };
+        assert_eq!(named_rw.to_tart_arg(), "data:/tmp/data");
     }
 
     #[test]

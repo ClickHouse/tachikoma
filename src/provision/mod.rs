@@ -41,20 +41,23 @@ pub async fn provision_vm(
     ssh: &dyn SshClient,
     ip: IpAddr,
     vm_name: &str,
-    _branch: &str,
+    branch: &str,
     config: &Config,
 ) -> Result<()> {
     // 1. Inject host SSH public key so SSH works for subsequent connections
     inject_ssh_key(tart, vm_name, &config.ssh_user).await?;
 
-    // 2. Set TACHIKOMA=1 in shell profile
+    // 2. Mount virtiofs shares and set up git environment
+    mount_and_configure_git(tart, vm_name, branch).await?;
+
+    // 3. Set TACHIKOMA=1 in shell profile
     tart_exec(tart, vm_name, "echo 'export TACHIKOMA=1' >> ~/.profile")
         .await
         .map_err(|e| {
             crate::TachikomaError::Provision(format!("Failed to set TACHIKOMA env: {e}"))
         })?;
 
-    // 3. Set git user config
+    // 4. Set git user config
     tart_exec(tart, vm_name, "git config --global user.name 'Tachikoma'")
         .await
         .ok();
@@ -66,25 +69,24 @@ pub async fn provision_vm(
     .await
     .ok();
 
-    // 4. Resolve and inject credentials
+    // 5. Resolve and inject credentials
     let creds = resolve_credentials(
         config.credential_command.as_deref(),
         config.api_key_command.as_deref(),
     )
     .await;
 
+    tracing::info!("Credential source: {}", creds.label());
+    if creds.is_none() {
+        tracing::warn!("No credentials found. Claude will not be able to authenticate in the VM.");
+    }
+
     inject_credentials(tart, vm_name, &creds).await?;
 
-    // 5. Mark Claude onboarding complete
-    tart_exec(
-        tart,
-        vm_name,
-        "mkdir -p ~/.claude && echo '{\"completedOnboarding\": true}' > ~/.claude/settings.local.json",
-    )
-    .await
-    .ok();
+    // 6. Install Claude and mark onboarding complete
+    install_claude(tart, vm_name).await?;
 
-    // 6. Run profile scripts
+    // 7. Run profile scripts
     let config_dir = crate::state::FileStateStore::default_path();
     let profiles = profile::discover_profiles(
         &config_dir,
@@ -121,36 +123,160 @@ pub async fn provision_vm(
     Ok(())
 }
 
-/// Inject the host's SSH public key into the VM's authorized_keys.
-async fn inject_ssh_key(tart: &dyn TartRunner, vm_name: &str, user: &str) -> Result<()> {
-    // Find the host's SSH public key
-    let home = dirs::home_dir().ok_or_else(|| {
-        crate::TachikomaError::Provision("Cannot determine home directory".to_string())
+/// Mount virtiofs shares inside the VM and configure git environment.
+async fn mount_and_configure_git(
+    tart: &dyn TartRunner,
+    vm_name: &str,
+    branch: &str,
+) -> Result<()> {
+    // Mount the virtiofs automount point
+    tart_exec(
+        tart,
+        vm_name,
+        "sudo mkdir -p /mnt/tachikoma && sudo mount -t virtiofs com.apple.virtio-fs.automount /mnt/tachikoma",
+    )
+    .await
+    .map_err(|e| {
+        crate::TachikomaError::Provision(format!("Failed to mount virtiofs: {e}"))
     })?;
 
-    let key_candidates = [
-        home.join(".ssh/id_ed25519.pub"),
-        home.join(".ssh/id_rsa.pub"),
-        home.join(".ssh/id_ecdsa.pub"),
-    ];
+    // Symlink for convenience
+    tart_exec(tart, vm_name, "ln -sf /mnt/tachikoma/code ~/code")
+        .await
+        .ok();
 
-    let pub_key = {
-        let mut found = None;
-        for path in &key_candidates {
-            if let Ok(content) = tokio::fs::read_to_string(path).await {
-                let trimmed = content.trim().to_string();
-                if !trimmed.is_empty() {
-                    found = Some(trimmed);
-                    break;
-                }
-            }
-        }
-        found
+    // Determine GIT_DIR: for linked worktrees, point at the worktree-specific gitdir
+    let git_dir_check = format!(
+        "if [ -d /mnt/tachikoma/dotgit/worktrees/{branch} ]; then echo worktree; else echo main; fi"
+    );
+    let git_type = tart_exec(tart, vm_name, &git_dir_check)
+        .await
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "main".to_string());
+
+    let git_dir = if git_type == "worktree" {
+        format!("/mnt/tachikoma/dotgit/worktrees/{branch}")
+    } else {
+        "/mnt/tachikoma/dotgit".to_string()
     };
 
-    let Some(pub_key) = pub_key else {
-        tracing::warn!("No SSH public key found on host. SSH access may not work.");
-        return Ok(());
+    // Set up git environment in profile
+    let profile_cmds = format!(
+        "echo 'export GIT_DIR={git_dir}' >> ~/.profile && \
+         echo 'export GIT_WORK_TREE=/mnt/tachikoma/code' >> ~/.profile && \
+         echo 'cd /mnt/tachikoma/code' >> ~/.profile"
+    );
+    tart_exec(tart, vm_name, &profile_cmds)
+        .await
+        .map_err(|e| {
+            crate::TachikomaError::Provision(format!("Failed to set git environment: {e}"))
+        })?;
+
+    // Mark the directory as safe for git
+    tart_exec(
+        tart,
+        vm_name,
+        "git config --global --add safe.directory /mnt/tachikoma/code",
+    )
+    .await
+    .ok();
+
+    tracing::info!("Mounted virtiofs shares and configured git (GIT_DIR={git_dir})");
+    Ok(())
+}
+
+/// Install Claude Code in the VM.
+async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
+    // Mark onboarding complete first
+    tart_exec(
+        tart,
+        vm_name,
+        "mkdir -p ~/.claude && echo '{\"completedOnboarding\": true}' > ~/.claude/settings.local.json",
+    )
+    .await
+    .ok();
+
+    // Install Claude (script requires bash, not dash/sh)
+    tart_exec(
+        tart,
+        vm_name,
+        "curl -fsSL https://claude.ai/install.sh | bash",
+    )
+    .await
+    .map_err(|e| {
+        crate::TachikomaError::Provision(format!("Failed to install Claude: {e}"))
+    })?;
+
+    // Verify installation (~/.local/bin/claude is the default install location)
+    match tart_exec(tart, vm_name, "~/.local/bin/claude --version").await {
+        Ok(version) => tracing::info!("Claude installed: {}", version.trim()),
+        Err(e) => tracing::warn!("Claude install verification failed: {e}"),
+    }
+
+    Ok(())
+}
+
+/// Ensure a tachikoma-specific SSH key pair exists on the host, generating one if needed.
+async fn ensure_tachikoma_key() -> Result<std::path::PathBuf> {
+    let key_path = crate::ssh::tachikoma_key_path().ok_or_else(|| {
+        crate::TachikomaError::Provision("Cannot determine home directory".to_string())
+    })?;
+    let pub_path = key_path.with_extension("pub");
+
+    if !pub_path.exists() {
+        tracing::info!("Generating SSH key pair at {}", key_path.display());
+
+        // Ensure ~/.ssh exists with correct permissions
+        if let Some(ssh_dir) = key_path.parent() {
+            tokio::fs::create_dir_all(ssh_dir).await.map_err(|e| {
+                crate::TachikomaError::Provision(format!("Failed to create ~/.ssh: {e}"))
+            })?;
+        }
+
+        let output = tokio::process::Command::new("ssh-keygen")
+            .args([
+                "-t", "ed25519",
+                "-f", &key_path.display().to_string(),
+                "-N", "",
+                "-C", "tachikoma",
+            ])
+            .output()
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!("Failed to run ssh-keygen: {e}"))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::TachikomaError::Provision(format!(
+                "ssh-keygen failed: {stderr}"
+            )));
+        }
+    }
+
+    Ok(key_path)
+}
+
+/// Inject the host's SSH public key into the VM's authorized_keys.
+async fn inject_ssh_key(tart: &dyn TartRunner, vm_name: &str, user: &str) -> Result<()> {
+    // Ensure tachikoma key exists (generate if needed), then use it
+    let tachikoma_key = ensure_tachikoma_key().await?;
+    let pub_path = tachikoma_key.with_extension("pub");
+
+    let pub_key = tokio::fs::read_to_string(&pub_path)
+        .await
+        .map_err(|e| {
+            crate::TachikomaError::Provision(format!(
+                "Failed to read tachikoma public key {}: {e}",
+                pub_path.display()
+            ))
+        })?;
+
+    let pub_key = pub_key.trim().to_string();
+    if pub_key.is_empty() {
+        return Err(crate::TachikomaError::Provision(
+            "Tachikoma public key is empty".to_string(),
+        ));
     };
 
     let escaped = pub_key.replace('\'', "'\\''");
