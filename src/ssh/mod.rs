@@ -95,6 +95,7 @@ impl SshClient for RealSshClient {
 
         let mut cmd = std::process::Command::new("ssh");
         cmd.args(Self::ssh_opts());
+        cmd.arg("-t");
         cmd.arg(format!("{user}@{ip}"));
 
         // exec() replaces the current process
