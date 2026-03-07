@@ -87,6 +87,17 @@ pub fn branch_slug(branch: &str) -> String {
     slugify(branch, 63)
 }
 
+/// Convert a filesystem path to a flat slug suitable for directory names.
+/// Replaces `/` with `-` and collapses leading separators.
+/// Used for Claude project slugs: `/Users/rahul/proj` → `-Users-rahul-proj`.
+pub fn path_slug(path: &std::path::Path) -> String {
+    path.to_string_lossy().replace('/', "-")
+}
+
+/// The `~/.claude` subdirectories that are safe to share into VMs as virtiofs mounts.
+/// Sensitive data (`history.jsonl`, `projects/`, etc.) is intentionally excluded.
+pub const CLAUDE_SHARE_DIRS: &[&str] = &["rules", "agents", "plugins", "skills"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
