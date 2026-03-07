@@ -65,17 +65,15 @@ pub async fn provision_vm(
             crate::TachikomaError::Provision(format!("Failed to set TACHIKOMA env: {e}"))
         })?;
 
-    // 4. Set git user config
-    tart_exec(tart, vm_name, "git config --global user.name 'Tachikoma'")
-        .await
-        .ok();
-    tart_exec(
-        tart,
-        vm_name,
-        "git config --global user.email 'tachikoma@localhost'",
-    )
-    .await
-    .ok();
+    // 4. Set git user config (two independent calls — run concurrently)
+    let _ = tokio::join!(
+        tart_exec(tart, vm_name, "git config --global user.name 'Tachikoma'"),
+        tart_exec(
+            tart,
+            vm_name,
+            "git config --global user.email 'tachikoma@localhost'"
+        ),
+    );
 
     // 5. Resolve and inject credentials
     on_status("Injecting credentials...");
@@ -281,7 +279,7 @@ async fn link_host_claude_config(
     tart_exec(tart, vm_name, "mkdir -p ~/.claude").await.ok();
 
     // Each subdir is mounted as its own virtiofs share: /mnt/tachikoma/claude-<name>
-    for subdir in ["rules", "agents", "plugins", "skills"] {
+    for subdir in crate::CLAUDE_SHARE_DIRS {
         let mount = format!("/mnt/tachikoma/claude-{subdir}");
         tart_exec(
             tart,
@@ -295,7 +293,7 @@ async fn link_host_claude_config(
     // Symlink project memory (MEMORY.md) if mounted.
     // Claude Code stores project data at ~/.claude/projects/<slug>/ where
     // <slug> is the repo root path with / replaced by - (e.g. -Users-rahul-projects-foo).
-    let project_slug = repo_root.to_string_lossy().replace('/', "-");
+    let project_slug = crate::path_slug(repo_root);
     let project_dir = format!("~/.claude/projects/{project_slug}");
     tart_exec(
         tart,

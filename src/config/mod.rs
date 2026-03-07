@@ -31,48 +31,53 @@ impl FileConfigLoader {
     }
 }
 
+/// Read a TOML config file, returning `None` if the file doesn't exist.
+async fn read_partial(path: &std::path::Path, label: &str) -> Result<Option<PartialConfig>> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(contents) => {
+            let partial = toml::from_str(&contents).map_err(|e| {
+                crate::TachikomaError::Config(format!("Failed to parse {label} config: {e}"))
+            })?;
+            Ok(Some(partial))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(crate::TachikomaError::Config(format!(
+            "Failed to read {label} config: {e}"
+        ))),
+    }
+}
+
 #[async_trait]
 impl ConfigLoader for FileConfigLoader {
     async fn load(&self, repo_root: Option<PathBuf>) -> Result<Config> {
-        let mut merged = default_config();
-
-        // Layer 1: Global config
         let global_path = Self::global_config_path();
-        if global_path.exists() {
-            let contents = tokio::fs::read_to_string(&global_path).await.map_err(|e| {
-                crate::TachikomaError::Config(format!("Failed to read global config: {e}"))
-            })?;
-            let global: PartialConfig = toml::from_str(&contents).map_err(|e| {
-                crate::TachikomaError::Config(format!("Failed to parse global config: {e}"))
-            })?;
-            merged = merged.merge(global);
+
+        // Read all config files concurrently; merge in layer order afterward.
+        let (global, repo, local) = match &repo_root {
+            Some(root) => {
+                let repo_path = root.join(".tachikoma.toml");
+                let local_path = root.join(".tachikoma.local.toml");
+                tokio::join!(
+                    read_partial(&global_path, "global"),
+                    read_partial(&repo_path, "repo"),
+                    read_partial(&local_path, "local"),
+                )
+            }
+            None => {
+                let (global,) = tokio::join!(read_partial(&global_path, "global"),);
+                (global, Ok(None), Ok(None))
+            }
+        };
+
+        let mut merged = default_config();
+        if let Some(p) = global? {
+            merged = merged.merge(p);
         }
-
-        // Layer 2 & 3: Repo configs
-        if let Some(root) = repo_root {
-            let repo_config = root.join(".tachikoma.toml");
-            if repo_config.exists() {
-                let contents = tokio::fs::read_to_string(&repo_config).await.map_err(|e| {
-                    crate::TachikomaError::Config(format!("Failed to read repo config: {e}"))
-                })?;
-                let partial: PartialConfig = toml::from_str(&contents).map_err(|e| {
-                    crate::TachikomaError::Config(format!("Failed to parse repo config: {e}"))
-                })?;
-                merged = merged.merge(partial);
-            }
-
-            let local_config = root.join(".tachikoma.local.toml");
-            if local_config.exists() {
-                let contents = tokio::fs::read_to_string(&local_config)
-                    .await
-                    .map_err(|e| {
-                        crate::TachikomaError::Config(format!("Failed to read local config: {e}"))
-                    })?;
-                let partial: PartialConfig = toml::from_str(&contents).map_err(|e| {
-                    crate::TachikomaError::Config(format!("Failed to parse local config: {e}"))
-                })?;
-                merged = merged.merge(partial);
-            }
+        if let Some(p) = repo? {
+            merged = merged.merge(p);
+        }
+        if let Some(p) = local? {
+            merged = merged.merge(p);
         }
 
         Config::from_partial(merged)

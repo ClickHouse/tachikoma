@@ -252,7 +252,7 @@ impl<'a> VmOrchestrator<'a> {
         // We avoid mounting all of ~/.claude because it contains sensitive data
         // (history.jsonl, projects/, debug/, file-history/).
         if let Some(claude_dir) = dirs::home_dir().map(|h| h.join(".claude")) {
-            for subdir in ["rules", "agents", "plugins", "skills"] {
+            for subdir in crate::CLAUDE_SHARE_DIRS {
                 let path = claude_dir.join(subdir);
                 if path.exists() {
                     dirs.push(DirMount {
@@ -266,7 +266,7 @@ impl<'a> VmOrchestrator<'a> {
             // Mount current project's memory/ directory (not the whole project dir,
             // which contains sensitive conversation transcripts in .jsonl files).
             // Claude Code uses the path slug: /a/b/c → -a-b-c
-            let project_slug = repo_root.to_string_lossy().replace('/', "-");
+            let project_slug = crate::path_slug(repo_root);
             let memory_dir = claude_dir
                 .join("projects")
                 .join(&project_slug)
@@ -363,6 +363,13 @@ mod tests {
         Config::from_partial(PartialConfig::default()).unwrap()
     }
 
+    fn default_state_store() -> MockStateStore {
+        let mut s = MockStateStore::new();
+        s.expect_load().returning(|| Ok(State::new()));
+        s.expect_save().returning(|_| Ok(()));
+        s
+    }
+
     fn test_vm_info(name: &str, state: &str) -> TartVmInfo {
         TartVmInfo {
             name: name.to_string(),
@@ -402,9 +409,7 @@ mod tests {
 
         let git = MockGitWorktree::new();
 
-        let mut state_store = MockStateStore::new();
-        state_store.expect_load().returning(|| Ok(State::new()));
-        state_store.expect_save().returning(|_| Ok(()));
+        let state_store = default_state_store();
 
         let config = test_config();
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
@@ -440,9 +445,7 @@ mod tests {
 
         let git = MockGitWorktree::new();
 
-        let mut state_store = MockStateStore::new();
-        state_store.expect_load().returning(|| Ok(State::new()));
-        state_store.expect_save().returning(|_| Ok(()));
+        let state_store = default_state_store();
 
         let config = test_config();
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
@@ -478,9 +481,7 @@ mod tests {
 
         let git = MockGitWorktree::new();
 
-        let mut state_store = MockStateStore::new();
-        state_store.expect_load().returning(|| Ok(State::new()));
-        state_store.expect_save().returning(|_| Ok(()));
+        let state_store = default_state_store();
 
         let config = test_config();
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
@@ -516,9 +517,7 @@ mod tests {
 
         let git = MockGitWorktree::new();
 
-        let mut state_store = MockStateStore::new();
-        state_store.expect_load().returning(|| Ok(State::new()));
-        state_store.expect_save().returning(|_| Ok(()));
+        let state_store = default_state_store();
 
         let config = test_config();
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
