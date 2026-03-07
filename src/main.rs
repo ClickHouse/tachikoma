@@ -28,7 +28,38 @@ async fn main() {
     }
 }
 
+/// Returns true for commands that require tart to be installed.
+fn command_needs_tart(cmd: &Option<Command>) -> bool {
+    !matches!(
+        cmd,
+        Some(Command::Doctor)
+            | Some(Command::Completions { .. })
+            | Some(Command::Mcp)
+            | Some(Command::Config { .. })
+    )
+}
+
+/// Check whether `tart` is available on PATH. Runs `tart --version` as a fast probe.
+async fn check_tart_available() -> bool {
+    tokio::process::Command::new("tart")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
+    if command_needs_tart(&cli.command) && !check_tart_available().await {
+        eprintln!("error: tart is not installed. Install it with:");
+        eprintln!("  brew install cirruslabs/cli/tart");
+        eprintln!();
+        eprintln!("Run 'tachikoma doctor' for a full system check.");
+        std::process::exit(1);
+    }
+
     let tart = RealTartRunner::new();
     let ssh = RealSshClient::new();
     let git = RealGitWorktree::new();

@@ -27,6 +27,8 @@ impl RealSshClient {
     }
 
     fn ssh_opts() -> Vec<String> {
+        // StrictHostKeyChecking=no is intentional: VMs are local ephemeral instances
+        // that get new host keys on each clone. There is no persistent identity to verify.
         let mut opts = vec![
             "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
             "-o".to_string(), "UserKnownHostsFile=/dev/null".to_string(),

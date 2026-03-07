@@ -16,11 +16,23 @@ pub async fn discover_profiles(
         collect_scripts(&global_dir, &mut profiles).await?;
     }
 
-    // 2. Repo-level profiles
+    // 2. Repo-level profiles (these come from the repo and may not be trusted)
     if let Some(root) = repo_root {
         let repo_profiles = root.join(".tachikoma").join("profiles");
         if repo_profiles.exists() {
-            collect_scripts(&repo_profiles, &mut profiles).await?;
+            let mut repo_scripts = Vec::new();
+            collect_scripts(&repo_profiles, &mut repo_scripts).await?;
+            if !repo_scripts.is_empty() {
+                tracing::warn!(
+                    "Running {} repo-level provisioning script(s) from {}",
+                    repo_scripts.len(),
+                    repo_profiles.display()
+                );
+                for script in &repo_scripts {
+                    tracing::warn!("  {}", script.display());
+                }
+            }
+            profiles.extend(repo_scripts);
         }
     }
 

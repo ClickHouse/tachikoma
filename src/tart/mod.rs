@@ -101,9 +101,13 @@ impl TartRunner for RealTartRunner {
         cmd.stdout(Stdio::null());
         cmd.stderr(Stdio::null());
 
+        // SAFETY: setsid() is async-signal-safe and appropriate in pre_exec.
+        // We detach so tart run outlives the CLI process.
         unsafe {
             cmd.pre_exec(|| {
-                libc::setsid();
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
                 Ok(())
             });
         }
@@ -182,10 +186,7 @@ impl TartRunner for RealTartRunner {
         }
 
         let ip_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        match ip_str.parse::<IpAddr>() {
-            Ok(ip) => Ok(Some(ip)),
-            Err(_) => Ok(None),
-        }
+        Ok(ip_str.parse::<IpAddr>().ok())
     }
 
     async fn exec(&self, name: &str, cmd: Vec<String>) -> Result<ExecOutput> {

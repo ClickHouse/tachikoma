@@ -17,7 +17,7 @@ pub async fn run(
 
     let mut state = state_store.load().await?;
     if let Some(entry) = state.find_vm_mut(vm_name) {
-        entry.status = status.clone();
+        entry.status = status;
     }
     state_store.save(&state).await?;
 

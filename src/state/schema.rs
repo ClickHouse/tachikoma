@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum VmStatus {
     Running,
@@ -20,6 +20,20 @@ pub struct VmEntry {
     pub last_used: DateTime<Utc>,
     pub status: VmStatus,
     pub ip: Option<String>,
+}
+
+impl VmEntry {
+    /// Parse the stored IP string into a typed `IpAddr`, returning a
+    /// descriptive error when the VM has no IP or the value is malformed.
+    pub fn parsed_ip(&self) -> crate::Result<std::net::IpAddr> {
+        let ip_str = self.ip.as_deref().ok_or_else(|| {
+            crate::TachikomaError::Vm(format!("VM '{}' has no IP address", self.name))
+        })?;
+
+        ip_str.parse().map_err(|e| {
+            crate::TachikomaError::Vm(format!("Invalid IP address '{ip_str}': {e}"))
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

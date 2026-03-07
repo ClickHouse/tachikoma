@@ -204,16 +204,7 @@ async fn mount_and_configure_git(
         })?;
 
     // Set VM hostname to branch slug so shell prompt shows admin@<branch>
-    let hostname: String = branch
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect::<String>()
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    let hostname = if hostname.len() > 63 { hostname[..63].trim_end_matches('-').to_string() } else { hostname };
+    let hostname = crate::branch_slug(branch);
     if !hostname.is_empty() {
         let set_hostname = format!(
             "sudo hostnamectl set-hostname {hostname} 2>/dev/null || sudo hostname {hostname} 2>/dev/null || true; \

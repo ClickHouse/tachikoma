@@ -2,7 +2,7 @@
 
 Autonomous VM sandboxes per git worktree on Apple Silicon. Named after the think-tanks from Ghost in the Shell.
 
-Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git branch, with your repo mounted read-only, Claude Code installed, and credentials injected automatically. Run `tachikoma` in a repo and you're inside a VM with everything ready.
+Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git branch, with your repo mounted read-only, Claude Code installed, and credentials injected automatically. Run `tachikoma` in a repo and you're inside a VM with everything ready. A progress spinner shows each step as it happens.
 
 ## Quick Start
 
@@ -22,6 +22,7 @@ tachikoma spawn
 #   - Your repo at ~/code (read-only virtiofs mount)
 #   - Git configured (GIT_DIR, GIT_WORK_TREE, safe.directory)
 #   - Claude Code installed and authenticated
+#   - Hostname set to your branch slug (admin@feature-ui-button)
 ```
 
 ## What Happens on `spawn`
@@ -30,12 +31,14 @@ tachikoma spawn
 2. Ensures a git worktree exists for the branch
 3. Clones the base image and boots a VM (or reconnects if already running)
 4. Mounts the worktree as `code` and `.git` as `dotgit` via virtiofs
-5. Generates a dedicated SSH key pair (`~/.ssh/tachikoma`) if needed
-6. Injects the SSH key, mounts virtiofs inside the guest, configures git env
-7. Resolves credentials (keychain, env vars, files, commands) and injects them
-8. Installs Claude Code and marks onboarding complete
-9. Runs any provisioning scripts
-10. Drops you into an interactive SSH session
+5. Mounts safe `~/.claude` subdirectories (rules, agents, plugins, skills, project memory)
+6. Generates a dedicated SSH key pair (`~/.ssh/tachikoma`) if needed
+7. Injects the SSH key, mounts virtiofs inside the guest, configures git env
+8. Sets VM hostname to branch slug (e.g. `admin@feature-ui-button`)
+9. Resolves credentials (keychain, env vars, files, commands) and injects them via base64 encoding
+10. Installs Claude Code, skips onboarding wizard, and injects cleaned host `settings.json`
+11. Runs any provisioning scripts (warns for repo-level scripts)
+12. Drops you into an interactive SSH session
 
 ## Commands
 
@@ -46,7 +49,7 @@ tachikoma enter [NAME]   SSH into a running VM
 tachikoma exec <CMD>     Run a command in the VM
 tachikoma halt [NAME]    Stop a VM
 tachikoma suspend [NAME] Suspend a VM (save state to disk)
-tachikoma destroy [NAME] Destroy a VM and its state
+tachikoma destroy [NAME] Destroy a VM and its state (confirms, skip with --force)
 tachikoma list           List all VMs
 tachikoma status         Show current VM status
 tachikoma prune          Prune VMs unused for 30+ days
@@ -54,6 +57,7 @@ tachikoma image          Manage base images (pull/list/delete)
 tachikoma doctor         Check prerequisites (tart, git, ssh)
 tachikoma config         Show or edit configuration
 tachikoma ssh            Manage SSH config entries
+tachikoma completions    Generate shell completions (bash/zsh/fish)
 tachikoma mcp            Start MCP server (stdio JSON-RPC)
 ```
 
@@ -108,10 +112,22 @@ Tachikoma automatically finds and injects Claude credentials into the VM, trying
 Inside the VM:
 
 ```
-/mnt/tachikoma/code/    # Worktree (read-only virtiofs)
-/mnt/tachikoma/dotgit/  # .git directory (read-only virtiofs)
-~/code                   # Symlink to /mnt/tachikoma/code
+/mnt/tachikoma/code/            # Worktree (read-only virtiofs)
+/mnt/tachikoma/dotgit/          # .git directory (read-only virtiofs)
+/mnt/tachikoma/claude-rules/    # ~/.claude/rules (read-only virtiofs)
+/mnt/tachikoma/claude-agents/   # ~/.claude/agents (read-only virtiofs)
+/mnt/tachikoma/claude-plugins/  # ~/.claude/plugins (read-only virtiofs)
+/mnt/tachikoma/claude-skills/   # ~/.claude/skills (read-only virtiofs)
+/mnt/tachikoma/claude-memory/   # Project memory directory (read-only virtiofs)
+~/code                           # Symlink to /mnt/tachikoma/code
+~/.claude/rules                  # Symlink to /mnt/tachikoma/claude-rules
+~/.claude/agents                 # Symlink to /mnt/tachikoma/claude-agents
+~/.claude/plugins                # Symlink to /mnt/tachikoma/claude-plugins
+~/.claude/skills                 # Symlink to /mnt/tachikoma/claude-skills
+~/.claude/settings.json          # Cleaned copy of host settings (writable)
 ```
+
+Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`history.jsonl`, `projects/`, `debug/`, `file-history/`) is never exposed. The host `settings.json` is stripped of hooks, statusLine, and macOS-specific deny rules before injection.
 
 Environment (set in `~/.profile`):
 ```bash
@@ -159,7 +175,7 @@ All external dependencies are behind traits (`TartRunner`, `SshClient`, `GitWork
 ## Development
 
 ```bash
-cargo test          # 104 tests
+cargo test          # 112 tests
 cargo clippy -- -D warnings
 cargo run -- doctor # Verify prerequisites
 ```

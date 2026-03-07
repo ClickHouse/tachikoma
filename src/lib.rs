@@ -48,6 +48,30 @@ pub enum TachikomaError {
 
 pub type Result<T> = std::result::Result<T, TachikomaError>;
 
+/// Slugify a string: lowercase, replace non-alphanumeric with hyphens,
+/// collapse runs, trim edges, truncate to `max_len`.
+fn slugify(input: &str, max_len: usize) -> String {
+    let lowered: String = input
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+
+    let collapsed = lowered
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+
+    let truncated = if collapsed.len() > max_len {
+        &collapsed[..max_len]
+    } else {
+        &collapsed
+    };
+
+    truncated.trim_end_matches('-').to_string()
+}
+
 /// Generate VM name: tachikoma-<repo>-<branch-slug>
 /// - Lowercase everything
 /// - Replace non-alphanumeric with hyphens
@@ -55,27 +79,12 @@ pub type Result<T> = std::result::Result<T, TachikomaError>;
 /// - Trim leading/trailing hyphens
 /// - Truncate to 63 chars
 pub fn vm_name(repo: &str, branch: &str) -> String {
-    let raw = format!("tachikoma-{}-{}", repo, branch);
+    slugify(&format!("tachikoma-{}-{}", repo, branch), 63)
+}
 
-    let slugified: String = raw
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-
-    let collapsed = slugified
-        .split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-
-    let truncated = if collapsed.len() > 63 {
-        &collapsed[..63]
-    } else {
-        &collapsed
-    };
-
-    truncated.trim_end_matches('-').to_string()
+/// Slugify a branch name into a valid hostname (max 63 chars).
+pub fn branch_slug(branch: &str) -> String {
+    slugify(branch, 63)
 }
 
 #[cfg(test)]
