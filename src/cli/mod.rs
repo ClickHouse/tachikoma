@@ -97,6 +97,12 @@ pub enum Command {
         #[command(subcommand)]
         action: SshAction,
     },
+    /// Generate shell completions
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for
+        shell: clap_complete::Shell,
+    },
     /// Start MCP server (stdio JSON-RPC)
     Mcp,
 }
@@ -163,5 +169,11 @@ mod tests {
     fn test_verbose_flag() {
         let cli = Cli::try_parse_from(["tachikoma", "-v", "doctor"]).unwrap();
         assert!(cli.verbose);
+    }
+
+    #[test]
+    fn test_completions_command() {
+        let cli = Cli::try_parse_from(["tachikoma", "completions", "bash"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Completions { .. })));
     }
 }

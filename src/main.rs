@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use tachikoma::cli::output::{print_error, print_success, OutputMode};
 use tachikoma::cli::{Cli, Command, ImageAction, SshAction};
 use tachikoma::config::{ConfigLoader, FileConfigLoader};
@@ -119,8 +119,19 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             print_success(mode, &format!("Stopped {vm_name}"), None);
         }
 
-        Some(Command::Destroy { name, force: _ }) => {
+        Some(Command::Destroy { name, force }) => {
             let vm_name = resolve_vm_name(name, &git, &cwd).await?;
+            if !force {
+                eprint!("Destroy VM '{vm_name}'? This cannot be undone. [y/N] ");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).map_err(|e| {
+                    tachikoma::TachikomaError::Other(format!("Failed to read input: {e}"))
+                })?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    print_success(mode, "Aborted", None);
+                    return Ok(());
+                }
+            }
             tachikoma::cmd::destroy::run(&vm_name, &tart, &state_store).await?;
             print_success(mode, &format!("Destroyed {vm_name}"), None);
         }
@@ -200,6 +211,11 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 print_success(mode, "SSH config refreshed", None);
             }
         },
+
+        Some(Command::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "tachikoma", &mut std::io::stdout());
+        }
 
         Some(Command::Mcp) => {
             tachikoma::mcp::run_server().await?;
