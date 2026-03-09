@@ -1,0 +1,106 @@
+name: Release
+
+# Triggered manually by a maintainer when ready to cut a release.
+# Before running: bump `version` in Cargo.toml on main and merge it.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release — must already match Cargo.toml (e.g. 0.2.0, no v prefix)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── 1. Sanity-check: Cargo.toml version must match the input ────────────────
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version matches Cargo.toml
+        run: |
+          cargo_version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ "$cargo_version" != "${{ github.event.inputs.version }}" ]; then
+            echo "❌ Cargo.toml version ($cargo_version) ≠ input (${{ github.event.inputs.version }})"
+            echo "Bump version in Cargo.toml on main first, then re-run this workflow."
+            exit 1
+          fi
+          echo "✅ Version $cargo_version confirmed"
+
+  # ── 2. Build macOS binaries (both architectures) ────────────────────────────
+  build:
+    name: Build ${{ matrix.artifact }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest   # Apple Silicon (M1/M2/M3)
+            target: aarch64-apple-darwin
+            artifact: tachikoma-macos-arm64
+          - os: macos-13       # Intel
+            target: x86_64-apple-darwin
+            artifact: tachikoma-macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Strip and stage binary
+        run: |
+          strip target/${{ matrix.target }}/release/tachikoma
+          cp target/${{ matrix.target }}/release/tachikoma ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  # ── 3. Tag + publish GitHub Release ─────────────────────────────────────────
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create and push git tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ github.event.inputs.version }}"
+          git push origin "v${{ github.event.inputs.version }}"
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: Tachikoma v${{ github.event.inputs.version }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            tachikoma-macos-arm64/tachikoma-macos-arm64
+            tachikoma-macos-x86_64/tachikoma-macos-x86_64
