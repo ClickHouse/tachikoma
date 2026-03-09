@@ -219,7 +219,7 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
 }
 
 /// Install Claude Code in the VM and replicate host settings.
-async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
+pub(crate) async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
     // Install Claude (script requires bash, not dash/sh)
     tart_exec(
         tart,

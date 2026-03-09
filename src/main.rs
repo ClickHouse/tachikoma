@@ -222,8 +222,20 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 tachikoma::cmd::image::pull(image, &tart).await?;
                 print_success(mode, &format!("Pulled image '{image}'"), None);
             }
-            ImageAction::Build => {
-                print_success(mode, "Image build not yet implemented", None);
+            ImageAction::Build { name, force } => {
+                let output = name
+                    .as_deref()
+                    .unwrap_or(tachikoma::cmd::image::DEFAULT_GOLDEN_IMAGE);
+                let base = &config.base_image;
+                let spinner = make_spinner(mode);
+                let result =
+                    tachikoma::cmd::image::build(base, output, force, &tart, &ssh, &|msg: &str| {
+                        spinner.set_message(msg.to_owned())
+                    })
+                    .await;
+                spinner.finish_and_clear();
+                result?;
+                print_success(mode, &format!("Built golden image '{output}'"), None);
             }
             ImageAction::Push { name } => {
                 let image = name.as_deref().unwrap_or(&config.base_image);
