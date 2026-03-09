@@ -119,7 +119,14 @@ pub enum ImageAction {
         name: Option<String>,
     },
     /// Build golden image from base
-    Build,
+    Build {
+        /// Output image name (default: tachikoma-golden)
+        #[arg(long, short)]
+        name: Option<String>,
+        /// Overwrite existing golden image
+        #[arg(long)]
+        force: bool,
+    },
     /// Push golden image to registry
     Push {
         /// Image name
