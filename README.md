@@ -4,6 +4,27 @@ Autonomous VM sandboxes per git worktree on Apple Silicon. Named after the think
 
 Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git branch, with your repo mounted read-only, Claude Code installed, and credentials injected automatically. Run `tachikoma` in a repo and you're inside a VM with everything ready. A progress spinner shows each step as it happens.
 
+## Installation
+
+Download the latest pre-built binary from [Releases](https://github.com/ClickHouse/tachikoma/releases/latest):
+
+```bash
+# Apple Silicon (M1/M2/M3)
+curl -fsSL https://github.com/ClickHouse/tachikoma/releases/latest/download/tachikoma-macos-arm64 \
+  -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+
+# Intel Mac
+curl -fsSL https://github.com/ClickHouse/tachikoma/releases/latest/download/tachikoma-macos-x86_64 \
+  -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+```
+
+Or build from source (requires [Rust](https://rustup.rs)):
+
+```bash
+git clone https://github.com/ClickHouse/tachikoma && cd tachikoma
+cargo build --release && sudo cp target/release/tachikoma /usr/local/bin/
+```
+
 ## Quick Start
 
 ```bash
@@ -179,10 +200,26 @@ All external dependencies are behind traits (`TartRunner`, `SshClient`, `GitWork
 ## Development
 
 ```bash
-cargo test          # 112 tests
+cargo test          # run all tests
 cargo clippy -- -D warnings
-cargo run -- doctor # Verify prerequisites
+cargo run -- doctor # verify prerequisites
 ```
+
+## Releasing
+
+Releases are built and published via GitHub Actions for both Apple Silicon and Intel macOS. Only maintainers with write access can trigger a release.
+
+**Steps:**
+
+1. Bump `version` in `Cargo.toml` on `main`:
+   ```toml
+   version = "0.2.0"
+   ```
+2. Open a PR, get it merged.
+3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.0`).
+4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.0`, and publishes a GitHub Release with the binaries attached.
+
+The released binaries are stripped and statically linked — no Rust toolchain needed to run them.
 
 ## License
 
