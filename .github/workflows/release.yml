@@ -38,10 +38,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest   # Apple Silicon (M1/M2/M3)
+          - os: macos-latest   # Apple Silicon (M1/M2/M3) — native
             target: aarch64-apple-darwin
             artifact: tachikoma-macos-arm64
-          - os: macos-13       # Intel
+          - os: macos-latest   # Intel — cross-compiled from arm64 runner
             target: x86_64-apple-darwin
             artifact: tachikoma-macos-x86_64
 
