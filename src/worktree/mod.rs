@@ -20,6 +20,7 @@ pub trait GitWorktree: Send + Sync {
     async fn diff_stat(&self, path: &Path) -> Result<String>;
     async fn add_all(&self, path: &Path) -> Result<()>;
     async fn commit(&self, path: &Path, message: &str) -> Result<()>;
+    async fn push(&self, path: &Path, remote: &str, branch: &str) -> Result<()>;
 }
 
 #[derive(Default)]
@@ -230,6 +231,23 @@ impl GitWorktree for RealGitWorktree {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(crate::TachikomaError::Git(format!(
                 "git commit failed: {stderr}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn push(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
+        let output = tokio::process::Command::new("git")
+            .args(["push", "-u", remote, branch])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git push: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git push failed: {stderr}"
             )));
         }
         Ok(())

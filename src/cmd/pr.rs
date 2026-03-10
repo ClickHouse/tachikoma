@@ -31,32 +31,12 @@ pub async fn run(
     git.commit(&worktree, &message).await?;
 
     // 5. Push branch
-    push_branch(&worktree, &branch)?;
+    git.push(&worktree, "origin", &branch).await?;
 
     // 6. Create PR via gh CLI
     let pr_url = create_pr(&worktree)?;
 
     Ok(pr_url)
-}
-
-fn push_branch(worktree: &std::path::Path, branch: &str) -> Result<()> {
-    let output = std::process::Command::new("git")
-        .args([
-            "-C",
-            &worktree.to_string_lossy(),
-            "push",
-            "-u",
-            "origin",
-            branch,
-        ])
-        .output()
-        .map_err(|e| TachikomaError::Git(format!("Failed to run git push: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(TachikomaError::Git(format!("git push failed: {stderr}")));
-    }
-    Ok(())
 }
 
 fn create_pr(worktree: &std::path::Path) -> Result<String> {
@@ -162,10 +142,23 @@ mod tests {
         git.expect_commit()
             .withf(|_, msg: &str| msg.contains("feat/my-feature"))
             .returning(|_, _| Ok(()));
-        // push_branch and create_pr use std::process::Command (not mocked),
-        // so the test will fail past commit — that's OK, we verify git ops happened.
-        // We just check that git.add_all and git.commit expectations were satisfied.
-        let _ = run("myrepo-feat", &git, &store).await;
-        // mockall will panic if expected methods weren't called
+        git.expect_push()
+            .withf(|_, remote: &str, branch: &str| {
+                remote == "origin" && branch == "feat/my-feature"
+            })
+            .returning(|_, _, _| Ok(()));
+        // create_pr shells out to `gh` which isn't available in test env.
+        // The function should fail with a gh-related error (not a git error).
+        let result = run("myrepo-feat", &git, &store).await;
+        match result {
+            Ok(_) => {} // gh happened to be installed and worked
+            Err(e) => {
+                let msg = e.to_string().to_lowercase();
+                assert!(
+                    msg.contains("gh") || msg.contains("pull request"),
+                    "error should be about gh CLI, not git: {msg}"
+                );
+            }
+        }
     }
 }
