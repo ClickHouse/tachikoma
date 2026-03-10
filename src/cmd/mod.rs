@@ -6,6 +6,7 @@ pub mod exec;
 pub mod halt;
 pub mod image;
 pub mod list;
+pub mod pr;
 pub mod prune;
 pub mod spawn;
 pub mod ssh_config;
