@@ -183,15 +183,22 @@ impl GitWorktree for RealGitWorktree {
             .output()
             .await
             .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git status: {e}")))?;
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git status --short failed: {stderr}"
+            )));
+        }
         let status = String::from_utf8_lossy(&status_output.stdout)
             .trim()
             .to_string();
 
-        // If diff is empty but there are untracked/new files, return the status lines
-        if diff.is_empty() && !status.is_empty() {
-            return Ok(status);
+        match (diff.is_empty(), status.is_empty()) {
+            (true, true) => Ok(String::new()),
+            (true, false) => Ok(status),
+            (false, true) => Ok(diff),
+            (false, false) => Ok(format!("{diff}\n\nUntracked/new files:\n{status}")),
         }
-        Ok(diff)
     }
 
     async fn add_all(&self, path: &Path) -> Result<()> {
