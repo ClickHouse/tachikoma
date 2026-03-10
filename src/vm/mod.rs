@@ -231,7 +231,7 @@ impl<'a> VmOrchestrator<'a> {
         }
     }
 
-    pub fn build_run_opts(&self, worktree_path: &Path, repo_root: &Path) -> RunOpts {
+    fn build_run_opts(&self, worktree_path: &Path, repo_root: &Path) -> RunOpts {
         let mut dirs = vec![DirMount {
             name: Some("code".into()),
             host_path: worktree_path.to_path_buf(),
