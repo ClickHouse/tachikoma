@@ -34,16 +34,17 @@ pub async fn run(
     git.push(&worktree, "origin", &branch).await?;
 
     // 6. Create PR via gh CLI
-    let pr_url = create_pr(&worktree)?;
+    let pr_url = create_pr(&worktree).await?;
 
     Ok(pr_url)
 }
 
-fn create_pr(worktree: &std::path::Path) -> Result<String> {
-    let output = std::process::Command::new("gh")
+async fn create_pr(worktree: &std::path::Path) -> Result<String> {
+    let output = tokio::process::Command::new("gh")
         .args(["pr", "create", "--fill"])
         .current_dir(worktree)
         .output()
+        .await
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 TachikomaError::Other(
@@ -59,7 +60,6 @@ fn create_pr(worktree: &std::path::Path) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // gh prints the PR URL to stdout even on some warning exits
         if !stdout.trim().is_empty() {
             return Ok(stdout.trim().to_string());
         }
