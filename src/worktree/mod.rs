@@ -17,6 +17,10 @@ pub trait GitWorktree: Send + Sync {
     async fn find_repo_root(&self, from: &Path) -> Result<PathBuf>;
     async fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>>;
     async fn create_worktree(&self, repo: &Path, branch: &str, target: &Path) -> Result<PathBuf>;
+    async fn diff_stat(&self, path: &Path) -> Result<String>;
+    async fn add_all(&self, path: &Path) -> Result<()>;
+    async fn commit(&self, path: &Path, message: &str) -> Result<()>;
+    async fn push(&self, path: &Path, remote: &str, branch: &str) -> Result<()>;
 }
 
 #[derive(Default)]
@@ -153,6 +157,101 @@ impl GitWorktree for RealGitWorktree {
 
         Ok(target.to_path_buf())
     }
+
+    async fn diff_stat(&self, path: &Path) -> Result<String> {
+        // Check staged + unstaged modifications
+        let diff_output = tokio::process::Command::new("git")
+            .args(["diff", "--stat", "HEAD"])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git diff: {e}")))?;
+
+        if !diff_output.status.success() {
+            let stderr = String::from_utf8_lossy(&diff_output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git diff --stat failed: {stderr}"
+            )));
+        }
+        let diff = String::from_utf8_lossy(&diff_output.stdout)
+            .trim()
+            .to_string();
+
+        // Also detect untracked files (not shown by diff --stat HEAD)
+        let status_output = tokio::process::Command::new("git")
+            .args(["status", "--short"])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git status: {e}")))?;
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git status --short failed: {stderr}"
+            )));
+        }
+        let status = String::from_utf8_lossy(&status_output.stdout)
+            .trim()
+            .to_string();
+
+        match (diff.is_empty(), status.is_empty()) {
+            (true, true) => Ok(String::new()),
+            (true, false) => Ok(status),
+            (false, true) => Ok(diff),
+            (false, false) => Ok(format!("{diff}\n\nUntracked/new files:\n{status}")),
+        }
+    }
+
+    async fn add_all(&self, path: &Path) -> Result<()> {
+        let output = tokio::process::Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git add: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git add -A failed: {stderr}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn commit(&self, path: &Path, message: &str) -> Result<()> {
+        let output = tokio::process::Command::new("git")
+            .args(["commit", "-m", message])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git commit: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git commit failed: {stderr}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn push(&self, path: &Path, remote: &str, branch: &str) -> Result<()> {
+        let output = tokio::process::Command::new("git")
+            .args(["push", "-u", remote, branch])
+            .current_dir(path)
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Git(format!("Failed to run git push: {e}")))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(crate::TachikomaError::Git(format!(
+                "git push failed: {stderr}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -245,5 +344,46 @@ mod tests {
         let wt = RealGitWorktree::new();
         let result = wt.find_repo_root(dir.path()).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_diff_stat_empty_on_clean_repo() {
+        let (_dir, path) = init_test_repo().await;
+        let wt = RealGitWorktree::new();
+        let stat = wt.diff_stat(&path).await.unwrap();
+        assert!(stat.is_empty(), "clean repo should have empty diff stat");
+    }
+
+    #[tokio::test]
+    async fn test_diff_stat_shows_changed_files() {
+        let (_dir, path) = init_test_repo().await;
+        std::fs::write(path.join("hello.txt"), "world").unwrap();
+        let wt = RealGitWorktree::new();
+        let stat = wt.diff_stat(&path).await.unwrap();
+        assert!(
+            stat.contains("hello.txt"),
+            "diff stat should mention changed file: got {stat:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_and_commit() {
+        let (_dir, path) = init_test_repo().await;
+        std::fs::write(path.join("hello.txt"), "world").unwrap();
+        let wt = RealGitWorktree::new();
+        wt.add_all(&path).await.unwrap();
+        wt.commit(&path, "test: add hello.txt").await.unwrap();
+
+        let output = tokio::process::Command::new("git")
+            .args(["log", "--oneline", "-1"])
+            .current_dir(&path)
+            .output()
+            .await
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            log.contains("test: add hello.txt"),
+            "commit should appear in log: got {log:?}"
+        );
     }
 }

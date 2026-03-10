@@ -235,7 +235,7 @@ impl<'a> VmOrchestrator<'a> {
         let mut dirs = vec![DirMount {
             name: Some("code".into()),
             host_path: worktree_path.to_path_buf(),
-            read_only: true,
+            read_only: false,
         }];
 
         // Mount .git directory read-only
@@ -604,5 +604,59 @@ mod tests {
             )
             .await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_run_opts_code_mount_is_writable() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let worktree = tmp.path().join("worktree");
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&repo_root).unwrap();
+
+        let config = test_config();
+        let tart = MockTartRunner::new();
+        let ssh = MockSshClient::new();
+        let git = MockGitWorktree::new();
+        let state_store = default_state_store();
+
+        let orchestrator = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
+
+        let opts = orchestrator.build_run_opts(&worktree, &repo_root);
+        let code_mount = opts
+            .dirs
+            .iter()
+            .find(|d| d.name.as_deref() == Some("code"))
+            .unwrap();
+        assert!(!code_mount.read_only, "code mount must be writable");
+    }
+
+    #[test]
+    fn test_build_run_opts_dotgit_mount_is_readonly() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let worktree = tmp.path().join("worktree");
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(repo_root.join(".git")).unwrap();
+
+        let config = test_config();
+        let tart = MockTartRunner::new();
+        let ssh = MockSshClient::new();
+        let git = MockGitWorktree::new();
+        let state_store = default_state_store();
+
+        let orchestrator = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
+
+        let opts = orchestrator.build_run_opts(&worktree, &repo_root);
+        let dotgit = opts
+            .dirs
+            .iter()
+            .find(|d| d.name.as_deref() == Some("dotgit"))
+            .unwrap();
+        assert!(dotgit.read_only, "dotgit mount must stay read-only");
     }
 }

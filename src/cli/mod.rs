@@ -74,6 +74,12 @@ pub enum Command {
         /// VM name (defaults to current branch VM)
         name: Option<String>,
     },
+    /// Commit Claude's changes and open a GitHub PR
+    Pr {
+        /// VM name (defaults to current branch VM)
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Prune old VMs
     Prune {
         /// Days since last use (default from config)
@@ -186,5 +192,20 @@ mod tests {
     fn test_completions_command() {
         let cli = Cli::try_parse_from(["tachikoma", "completions", "bash"]).unwrap();
         assert!(matches!(cli.command, Some(Command::Completions { .. })));
+    }
+
+    #[test]
+    fn test_pr_command_parses() {
+        let cli = Cli::try_parse_from(["tachikoma", "pr"]).unwrap();
+        assert!(matches!(cli.command, Some(Command::Pr { name: None })));
+    }
+
+    #[test]
+    fn test_pr_command_with_name() {
+        let cli = Cli::try_parse_from(["tachikoma", "pr", "--name", "myrepo-main"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Pr { name: Some(ref n) }) if n == "myrepo-main"
+        ));
     }
 }
