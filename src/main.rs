@@ -36,6 +36,7 @@ fn command_needs_tart(cmd: &Option<Command>) -> bool {
             | Some(Command::Completions { .. })
             | Some(Command::Mcp)
             | Some(Command::Config { .. })
+            | Some(Command::Pr { .. })
     )
 }
 
@@ -196,6 +197,12 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 tachikoma::TachikomaError::Vm(format!("VM '{vm_name}' not found"))
             })?;
             println!("{}", entry.worktree_path.display());
+        }
+
+        Some(Command::Pr { name }) => {
+            let vm_name = resolve_vm_name(name, &git, &cwd).await?;
+            let pr_url = tachikoma::cmd::pr::run(&vm_name, &git, &state_store).await?;
+            print_success(mode, &format!("PR created: {pr_url}"), None);
         }
 
         Some(Command::Prune { days, dry_run }) => {
