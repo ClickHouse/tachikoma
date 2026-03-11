@@ -4,7 +4,7 @@
 
 Tachikoma is a Rust CLI + MCP server that spawns isolated Linux VMs per git worktree on Apple Silicon, using [Tart](https://tart.run) as the virtualization backend. Each VM is named deterministically from `tachikoma-<repo>-<branch>`, provisioned with SSH keys and Claude Code credentials, and mounted with the host worktree via virtiofs.
 
-~6,200 lines of Rust across 36 source files, 112 tests, edition 2021.
+~6,500 lines of Rust across 38 source files, 126 tests, edition 2021.
 
 ---
 
@@ -330,7 +330,7 @@ DirMount                         ProxyEnv { provider, vars }
 
 | Share Name | Host Path | VM Path | Mode |
 |-----------|-----------|---------|------|
-| `code` | `<worktree>` | `/mnt/tachikoma/code` + `~/code` | read-only |
+| `code` | `<worktree>` | `/mnt/tachikoma/code` + `~/code` | **read-write** |
 | `dotgit` | `<repo>/.git` | `/mnt/tachikoma/dotgit` | read-only |
 | `claude-rules` | `~/.claude/rules` | `/mnt/tachikoma/claude-rules` -> `~/.claude/rules` | read-only |
 | `claude-agents` | `~/.claude/agents` | `/mnt/tachikoma/claude-agents` -> `~/.claude/agents` | read-only |
@@ -339,6 +339,8 @@ DirMount                         ProxyEnv { provider, vars }
 | `claude-memory` | `~/.claude/projects/<slug>/memory` | `/mnt/tachikoma/claude-memory` -> `~/.claude/projects/<slug>/memory` | read-only |
 
 Only non-sensitive subdirectories are mounted individually. Sensitive data (`history.jsonl`, `projects/`, `debug/`, `file-history/`) is never exposed to the VM. The `settings.json` is read from the host, stripped of host-specific fields (`hooks`, `statusLine`, macOS `~/Library/` deny rules), and base64-encoded for transfer, then written as a writable copy in the VM.
+
+**Git access inside the VM:** The `code` mount is writable so Claude can edit source files freely. The `dotgit` mount is read-only — Claude cannot run `git` commands inside the VM (no commit, branch, or worktree operations). Use `tachikoma pr` on the host to commit Claude's changes and open a GitHub PR.
 
 ---
 
