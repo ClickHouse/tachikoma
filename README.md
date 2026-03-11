@@ -11,11 +11,11 @@ Download the latest pre-built binary using the [gh CLI](https://cli.github.com) 
 ```bash
 # Apple Silicon (M1/M2/M3)
 gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
-  --output /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+  --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
 gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
-  --output /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+  --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 ```
 
 Or build from source (requires [Rust](https://rustup.rs)):
