@@ -2,7 +2,7 @@
 
 Autonomous VM sandboxes per git worktree on Apple Silicon. Named after the think-tanks from Ghost in the Shell.
 
-Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git branch, with your repo mounted read-only, Claude Code installed, and credentials injected automatically. Run `tachikoma` in a repo and you're inside a VM with everything ready. A progress spinner shows each step as it happens.
+Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git branch, with your repo mounted writable, Claude Code installed, and credentials injected automatically. Run `tachikoma` in a repo and you're inside a VM with everything ready. When Claude is done, `tachikoma pr` commits the changes and opens a GitHub PR from the host. A progress spinner shows each step as it happens.
 
 ## Installation
 
@@ -40,7 +40,7 @@ cd your-repo
 tachikoma spawn
 
 # You're now SSH'd into an Ubuntu VM with:
-#   - Your repo at ~/code (read-only virtiofs mount)
+#   - Your repo at ~/code (writable virtiofs mount — Claude can edit files)
 #   - Git configured (GIT_DIR, GIT_WORK_TREE, safe.directory)
 #   - Claude Code installed and authenticated
 #   - Hostname set to your branch slug (admin@feature-ui-button)
@@ -69,6 +69,8 @@ tachikoma [BRANCH]       Shorthand for `spawn <branch>`
 tachikoma spawn [BRANCH] Spawn/reconnect a VM for a branch
 tachikoma enter [NAME]   SSH into a running VM
 tachikoma exec <CMD>     Run a command in the VM
+tachikoma pr [--name N]  Commit Claude's changes and open a GitHub PR
+tachikoma cd [NAME]      Print the worktree path (useful for cd $(tachikoma cd))
 tachikoma halt [NAME]    Stop a VM
 tachikoma suspend [NAME] Suspend a VM (save state to disk)
 tachikoma destroy [NAME] Destroy a VM and its state (confirms, skip with --force)
@@ -137,7 +139,7 @@ Tachikoma automatically finds and injects Claude credentials into the VM, trying
 Inside the VM:
 
 ```
-/mnt/tachikoma/code/            # Worktree (read-only virtiofs)
+/mnt/tachikoma/code/            # Worktree (writable virtiofs — Claude can edit files)
 /mnt/tachikoma/dotgit/          # .git directory (read-only virtiofs)
 /mnt/tachikoma/claude-rules/    # ~/.claude/rules (read-only virtiofs)
 /mnt/tachikoma/claude-agents/   # ~/.claude/agents (read-only virtiofs)
@@ -154,12 +156,25 @@ Inside the VM:
 
 Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`history.jsonl`, `projects/`, `debug/`, `file-history/`) is never exposed. The host `settings.json` is stripped of hooks, statusLine, and macOS-specific deny rules before injection.
 
+**Note:** The `.git` directory is mounted read-only. Claude can edit source files freely but cannot run `git` commands inside the VM. Use `tachikoma pr` from the host to commit changes and open a PR.
+
 Environment (set in `~/.profile`):
 ```bash
 GIT_DIR=/mnt/tachikoma/dotgit        # or .../worktrees/<branch> for linked worktrees
 GIT_WORK_TREE=/mnt/tachikoma/code
 TACHIKOMA=1
 ```
+
+## Typical Workflow
+
+```bash
+tachikoma              # spawn VM, SSH in, Claude starts working
+tachikoma enter        # re-enter the VM to check progress or direct Claude
+tachikoma pr           # when done: commit + push + open GitHub PR
+tachikoma destroy      # clean up the VM when the PR is merged
+```
+
+`tachikoma pr` auto-generates a commit message from `git diff --stat` and calls `gh pr create --fill`. Requires the [gh CLI](https://cli.github.com) on the host.
 
 ## MCP Server
 
