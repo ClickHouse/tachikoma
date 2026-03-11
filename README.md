@@ -10,11 +10,11 @@ Download the latest pre-built binary from [Releases](https://github.com/ClickHou
 
 ```bash
 # Apple Silicon (M1/M2/M3)
-curl -fsSL https://github.com/ClickHouse/tachikoma/releases/latest/download/tachikoma-macos-arm64 \
+curl -fsSL https://github.com/ClickHouse/tachikoma/releases/download/v0.2.0/tachikoma-macos-arm64 \
   -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
-curl -fsSL https://github.com/ClickHouse/tachikoma/releases/latest/download/tachikoma-macos-x86_64 \
+curl -fsSL https://github.com/ClickHouse/tachikoma/releases/download/v0.2.0/tachikoma-macos-x86_64 \
   -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
 ```
 
