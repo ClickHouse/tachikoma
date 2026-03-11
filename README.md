@@ -6,16 +6,16 @@ Tachikoma spawns isolated Linux VMs via [Tart](https://tart.run), one per git br
 
 ## Installation
 
-Download the latest pre-built binary from [Releases](https://github.com/ClickHouse/tachikoma/releases/latest):
+Download the latest pre-built binary using the [gh CLI](https://cli.github.com) (required for this private repo):
 
 ```bash
 # Apple Silicon (M1/M2/M3)
-curl -fsSL https://github.com/ClickHouse/tachikoma/releases/download/v0.2.0/tachikoma-macos-arm64 \
-  -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
+  --output /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
-curl -fsSL https://github.com/ClickHouse/tachikoma/releases/download/v0.2.0/tachikoma-macos-x86_64 \
-  -o /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
+gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
+  --output /usr/local/bin/tachikoma && chmod +x /usr/local/bin/tachikoma
 ```
 
 Or build from source (requires [Rust](https://rustup.rs)):
