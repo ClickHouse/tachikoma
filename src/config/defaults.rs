@@ -16,5 +16,7 @@ pub fn default_config() -> PartialConfig {
         credential_command: None,
         api_key_command: None,
         sync_gh_auth: Some(false),
+        share_claude_dirs: None,
+        sync_mcp_servers: Some(true),
     }
 }

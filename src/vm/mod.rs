@@ -252,7 +252,7 @@ impl<'a> VmOrchestrator<'a> {
         // We avoid mounting all of ~/.claude because it contains sensitive data
         // (history.jsonl, projects/, debug/, file-history/).
         if let Some(claude_dir) = dirs::home_dir().map(|h| h.join(".claude")) {
-            for subdir in crate::CLAUDE_SHARE_DIRS {
+            for subdir in &self.config.share_claude_dirs {
                 let path = claude_dir.join(subdir);
                 if path.exists() {
                     dirs.push(DirMount {

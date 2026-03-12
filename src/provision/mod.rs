@@ -16,6 +16,27 @@ fn b64(data: &str) -> String {
     base64::engine::general_purpose::STANDARD.encode(data.as_bytes())
 }
 
+/// Extract all env var key-value pairs from `mcpServers[*].env` in a settings.json value.
+/// Returns a deduplicated list of `(key, value)` pairs sorted by key name.
+/// If the same key appears in multiple MCP servers, the last one encountered wins.
+fn extract_mcp_env_vars(settings: &serde_json::Value) -> Vec<(String, String)> {
+    let mut env_map = std::collections::BTreeMap::new();
+
+    if let Some(servers) = settings.get("mcpServers").and_then(|v| v.as_object()) {
+        for (_server_name, server_config) in servers {
+            if let Some(env) = server_config.get("env").and_then(|v| v.as_object()) {
+                for (key, value) in env {
+                    if let Some(val_str) = value.as_str() {
+                        env_map.insert(key.clone(), val_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    env_map.into_iter().collect()
+}
+
 /// Run a command in the VM via tart exec, returning Ok/Err.
 async fn tart_exec(tart: &dyn TartRunner, vm_name: &str, cmd: &str) -> Result<String> {
     let output = tart
@@ -115,9 +136,9 @@ pub async fn provision_vm(
     on_status("Installing Claude Code...");
     install_claude(tart, vm_name).await?;
     on_status("Linking host configuration...");
-    link_host_claude_config(tart, vm_name, repo_root).await;
+    link_host_claude_config(tart, vm_name, repo_root, config).await;
 
-    // 7. Run profile scripts
+    // 8. Run profile scripts
     on_status("Running provisioning scripts...");
     let config_dir = crate::state::FileStateStore::default_path();
     let profiles = profile::discover_profiles(&config_dir, None, &config.provision_scripts).await?;
@@ -140,7 +161,7 @@ pub async fn provision_vm(
             })?;
     }
 
-    // 7. Verify SSH connectivity now works
+    // 9. Verify SSH connectivity now works
     on_status("Verifying SSH connectivity...");
     let user = &config.ssh_user;
     if let Err(e) = ssh.check_connection(ip, user).await {
@@ -275,11 +296,12 @@ async fn link_host_claude_config(
     tart: &dyn TartRunner,
     vm_name: &str,
     repo_root: &std::path::Path,
+    config: &Config,
 ) {
     tart_exec(tart, vm_name, "mkdir -p ~/.claude").await.ok();
 
     // Each subdir is mounted as its own virtiofs share: /mnt/tachikoma/claude-<name>
-    for subdir in crate::CLAUDE_SHARE_DIRS {
+    for subdir in &config.share_claude_dirs {
         let mount = format!("/mnt/tachikoma/claude-{subdir}");
         tart_exec(
             tart,
@@ -310,13 +332,16 @@ async fn link_host_claude_config(
 
     // Inject host settings.json (read from host filesystem, not mount, since
     // settings.json contains fields we need to strip before writing).
-    inject_host_claude_settings(tart, vm_name).await;
+    inject_host_claude_settings(tart, vm_name, config).await;
 
     tracing::info!("Linked host Claude config into VM");
 }
 
 /// Read host's ~/.claude/settings.json, strip host-specific fields, inject into VM.
-async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str) {
+/// When `config.sync_mcp_servers` is true (default), `mcpServers` is preserved in the
+/// injected settings and each server's `env` vars are also exported into `~/.profile`.
+/// When false, `mcpServers` is stripped entirely.
+async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str, config: &Config) {
     let settings_path = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("settings.json"),
         None => return,
@@ -324,31 +349,52 @@ async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str) {
 
     let contents = match tokio::fs::read_to_string(&settings_path).await {
         Ok(c) => c,
-        Err(_) => return,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => {
+            tracing::warn!("Failed to read host ~/.claude/settings.json: {e}");
+            return;
+        }
     };
 
-    let cleaned = match serde_json::from_str::<serde_json::Value>(&contents) {
-        Ok(mut v) => {
-            if let Some(obj) = v.as_object_mut() {
-                obj.remove("hooks");
-                obj.remove("statusLine");
-                if let Some(perms) = obj.get_mut("permissions") {
-                    if let Some(deny) = perms.get_mut("deny") {
-                        if let Some(arr) = deny.as_array_mut() {
-                            arr.retain(|v| {
-                                v.as_str()
-                                    .map(|s| !s.contains("~/Library/"))
-                                    .unwrap_or(true)
-                            });
-                        }
-                    }
+    let mut parsed = match serde_json::from_str::<serde_json::Value>(&contents) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Host ~/.claude/settings.json contains invalid JSON, skipping: {e}");
+            return;
+        }
+    };
+
+    // Extract MCP env vars before any stripping, while mcpServers is still present.
+    let mcp_env_vars = if config.sync_mcp_servers {
+        extract_mcp_env_vars(&parsed)
+    } else {
+        vec![]
+    };
+
+    // Strip host-specific fields.
+    if let Some(obj) = parsed.as_object_mut() {
+        obj.remove("hooks");
+        obj.remove("statusLine");
+
+        if !config.sync_mcp_servers {
+            obj.remove("mcpServers");
+        }
+
+        if let Some(perms) = obj.get_mut("permissions") {
+            if let Some(deny) = perms.get_mut("deny") {
+                if let Some(arr) = deny.as_array_mut() {
+                    arr.retain(|v| {
+                        v.as_str()
+                            .map(|s| !s.contains("~/Library/"))
+                            .unwrap_or(true)
+                    });
                 }
             }
-            match serde_json::to_string(&v) {
-                Ok(s) => s,
-                Err(_) => return,
-            }
         }
+    }
+
+    let cleaned = match serde_json::to_string(&parsed) {
+        Ok(s) => s,
         Err(_) => return,
     };
 
@@ -360,6 +406,28 @@ async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str) {
     )
     .await
     .ok();
+
+    // Also inject each MCP server's env vars into ~/.profile so they are available
+    // in the shell environment (belt-and-suspenders alongside the settings.json copy).
+    for (key, value) in &mcp_env_vars {
+        if !is_valid_mcp_env_name(key) {
+            tracing::warn!("Skipping invalid MCP env var name: {key}");
+            continue;
+        }
+        // Single-quote the value with proper POSIX escaping for shell safety.
+        let escaped_value = value.replace('\'', "'\\''");
+        let line = format!("export {key}='{escaped_value}'\n");
+        if let Err(e) = inject_profile_line(tart, vm_name, &line).await {
+            tracing::warn!("Failed to inject MCP env var {key}: {e}");
+        }
+    }
+
+    if !mcp_env_vars.is_empty() {
+        tracing::info!(
+            "Injected {} MCP env var(s) into VM profile",
+            mcp_env_vars.len()
+        );
+    }
 }
 
 /// Sync the host's gh CLI auth config into the VM.
@@ -499,12 +567,24 @@ async fn inject_profile_line(tart: &dyn TartRunner, vm_name: &str, line: &str) -
     .map(|_| ())
 }
 
-/// Validate that an env var name contains only safe characters (A-Z, 0-9, _).
+/// Validate that an env var name is safe for proxy/system env vars (uppercase only: A-Z, 0-9, _).
 fn is_valid_env_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .bytes()
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        && !name.as_bytes()[0].is_ascii_digit()
+}
+
+/// Validate that an env var name is safe for MCP server env vars.
+/// More permissive than `is_valid_env_name`: allows lowercase letters since
+/// MCP server configs authored by third parties often use mixed-case names.
+/// Follows POSIX: `[a-zA-Z_][a-zA-Z0-9_]*`
+fn is_valid_mcp_env_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphabetic() || b.is_ascii_digit() || b == b'_')
         && !name.as_bytes()[0].is_ascii_digit()
 }
 
@@ -515,13 +595,18 @@ async fn inject_credentials(
 ) -> Result<()> {
     match creds {
         CredentialSource::Keychain(key) => {
-            inject_profile_line(tart, vm_name, &format!("export ANTHROPIC_API_KEY={key}\n"))
-                .await
-                .map_err(|e| {
-                    crate::TachikomaError::Provision(format!(
-                        "Failed to inject keychain API key: {e}"
-                    ))
-                })?;
+            let escaped = key.replace('\'', "'\\''");
+            inject_profile_line(
+                tart,
+                vm_name,
+                &format!("export ANTHROPIC_API_KEY='{escaped}'\n"),
+            )
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!(
+                    "Failed to inject keychain API key: {e}"
+                ))
+            })?;
         }
         CredentialSource::File(data) => {
             let encoded = b64(data);
@@ -538,10 +623,11 @@ async fn inject_credentials(
             })?;
         }
         CredentialSource::EnvVar(token) | CredentialSource::Command(token) => {
+            let escaped = token.replace('\'', "'\\''");
             inject_profile_line(
                 tart,
                 vm_name,
-                &format!("export CLAUDE_CODE_OAUTH_TOKEN={token}\n"),
+                &format!("export CLAUDE_CODE_OAUTH_TOKEN='{escaped}'\n"),
             )
             .await
             .map_err(|e| {
@@ -549,11 +635,16 @@ async fn inject_credentials(
             })?;
         }
         CredentialSource::ApiKey(key) | CredentialSource::ApiKeyCommand(key) => {
-            inject_profile_line(tart, vm_name, &format!("export ANTHROPIC_API_KEY={key}\n"))
-                .await
-                .map_err(|e| {
-                    crate::TachikomaError::Provision(format!("Failed to inject API key: {e}"))
-                })?;
+            let escaped = key.replace('\'', "'\\''");
+            inject_profile_line(
+                tart,
+                vm_name,
+                &format!("export ANTHROPIC_API_KEY='{escaped}'\n"),
+            )
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!("Failed to inject API key: {e}"))
+            })?;
         }
         CredentialSource::ProxyEnv { vars, .. } => {
             for (key, value) in vars {
@@ -561,7 +652,8 @@ async fn inject_credentials(
                     tracing::warn!("Skipping invalid env var name: {key}");
                     continue;
                 }
-                inject_profile_line(tart, vm_name, &format!("export {key}={value}\n"))
+                let escaped = value.replace('\'', "'\\''");
+                inject_profile_line(tart, vm_name, &format!("export {key}='{escaped}'\n"))
                     .await
                     .ok();
             }
@@ -805,6 +897,253 @@ mod tests {
         assert!(!is_valid_env_name("lower"));
         assert!(!is_valid_env_name("key=value"));
         assert!(!is_valid_env_name("key;rm -rf /"));
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_basic() {
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "linear": {
+                    "command": "npx",
+                    "args": ["-y", "@anthropic/mcp-linear"],
+                    "env": {
+                        "LINEAR_API_KEY": "lin_api_abc123",
+                        "LINEAR_TEAM_ID": "TEAM-42"
+                    }
+                },
+                "github": {
+                    "command": "npx",
+                    "args": ["-y", "@anthropic/mcp-github"],
+                    "env": {
+                        "GITHUB_TOKEN": "ghp_xxxx"
+                    }
+                }
+            }
+        });
+
+        let vars: std::collections::HashMap<_, _> =
+            extract_mcp_env_vars(&settings).into_iter().collect();
+        assert_eq!(vars.len(), 3);
+        assert_eq!(vars["LINEAR_API_KEY"], "lin_api_abc123");
+        assert_eq!(vars["LINEAR_TEAM_ID"], "TEAM-42");
+        assert_eq!(vars["GITHUB_TOKEN"], "ghp_xxxx");
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_empty_settings() {
+        let vars = extract_mcp_env_vars(&serde_json::json!({}));
+        assert!(vars.is_empty());
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_no_env_field() {
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "some-server": { "command": "npx", "args": ["server"] }
+            }
+        });
+        assert!(extract_mcp_env_vars(&settings).is_empty());
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_non_string_values_skipped() {
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "srv": {
+                    "env": {
+                        "GOOD_KEY": "good_value",
+                        "BAD_KEY": 12345,
+                        "NULL_KEY": null
+                    }
+                }
+            }
+        });
+        let vars = extract_mcp_env_vars(&settings);
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0], ("GOOD_KEY".to_string(), "good_value".to_string()));
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_last_server_wins_on_conflict() {
+        // serde_json::Map preserves insertion order; iterating alpha then beta means
+        // beta overwrites alpha for the same key in our BTreeMap accumulator.
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "alpha": { "env": { "SHARED_KEY": "from_alpha" } },
+                "beta":  { "env": { "SHARED_KEY": "from_beta"  } }
+            }
+        });
+        let vars = extract_mcp_env_vars(&settings);
+        assert_eq!(vars.len(), 1);
+        assert_eq!(vars[0].1, "from_beta");
+    }
+
+    #[test]
+    fn test_is_valid_mcp_env_name() {
+        // Accepts uppercase (same as is_valid_env_name)
+        assert!(is_valid_mcp_env_name("AWS_REGION"));
+        assert!(is_valid_mcp_env_name("GITHUB_TOKEN"));
+        // Also accepts lowercase and mixed-case (MCP-specific)
+        assert!(is_valid_mcp_env_name("apiKey"));
+        assert!(is_valid_mcp_env_name("NpmToken"));
+        assert!(is_valid_mcp_env_name("linear_api_key"));
+        // Rejects digits at start, empty, spaces, and shell metacharacters
+        assert!(!is_valid_mcp_env_name(""));
+        assert!(!is_valid_mcp_env_name("0START"));
+        assert!(!is_valid_mcp_env_name("has space"));
+        assert!(!is_valid_mcp_env_name("key=value"));
+        assert!(!is_valid_mcp_env_name("key;rm -rf /"));
+    }
+
+    #[test]
+    fn test_extract_mcp_env_vars_accepts_lowercase_keys() {
+        let settings = serde_json::json!({
+            "mcpServers": {
+                "srv": {
+                    "env": {
+                        "apiKey": "lower-case-key",
+                        "NpmToken": "mixed-case"
+                    }
+                }
+            }
+        });
+        let vars: std::collections::HashMap<_, _> =
+            extract_mcp_env_vars(&settings).into_iter().collect();
+        assert_eq!(vars["apiKey"], "lower-case-key");
+        assert_eq!(vars["NpmToken"], "mixed-case");
+    }
+
+    #[test]
+    fn test_sync_mcp_servers_false_strips_mcp_section() {
+        use std::sync::{Arc, Mutex};
+
+        let injected: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cap = injected.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cap.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        });
+
+        // Build a settings JSON with mcpServers, hooks, and a normal field.
+        let settings = serde_json::json!({
+            "hooks": { "preToolUse": [] },
+            "theme": "dark",
+            "mcpServers": {
+                "linear": { "command": "npx", "env": { "LINEAR_KEY": "secret" } }
+            }
+        });
+        let settings_str = serde_json::to_string(&settings).unwrap();
+        let encoded_input = b64(&settings_str);
+
+        // Write settings.json to a temp dir and point HOME there.
+        let tmp = tempfile::tempdir().unwrap();
+        let claude_dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::write(claude_dir.join("settings.json"), &settings_str).unwrap();
+        std::env::set_var("HOME", tmp.path());
+
+        let config = Config::from_partial(PartialConfig {
+            sync_mcp_servers: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(inject_host_claude_settings(&tart, "vm", &config));
+
+        let cmds = injected.lock().unwrap();
+        // Find the base64-encoded settings injection command
+        let settings_cmd = cmds
+            .iter()
+            .find(|c| c.contains("settings.json"))
+            .expect("settings.json not written");
+
+        // Decode the injected settings and verify mcpServers was stripped
+        let b64_part = settings_cmd
+            .split_whitespace()
+            .find(|p| p.len() > 20 && !p.contains('/') && !p.contains('~'))
+            .expect("b64 token not found");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64_part)
+            .unwrap();
+        let decoded_json: serde_json::Value =
+            serde_json::from_slice(&decoded).unwrap();
+
+        assert!(
+            decoded_json.get("mcpServers").is_none(),
+            "mcpServers should be stripped when sync_mcp_servers = false"
+        );
+        assert!(
+            decoded_json.get("hooks").is_none(),
+            "hooks should always be stripped"
+        );
+        assert_eq!(
+            decoded_json.get("theme").and_then(|v| v.as_str()),
+            Some("dark"),
+            "theme should be preserved"
+        );
+        // Also verify no MCP env vars were injected into ~/.profile
+        assert!(
+            !cmds.iter().any(|c| c.contains("LINEAR_KEY")),
+            "MCP env vars should not be injected when sync_mcp_servers = false"
+        );
+        // Re-drop the _ prefix
+        let _ = encoded_input;
+    }
+
+    #[test]
+    fn test_credential_values_are_single_quoted() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            if args.len() >= 3 {
+                cmds.lock().unwrap().push(args[2].clone());
+            }
+            Ok(ExecOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        });
+
+        // A key with a single-quote in it — the trickiest case.
+        let creds = CredentialSource::ApiKey("sk-test'with'quotes".into());
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(inject_credentials(&tart, "test-vm", &creds))
+            .unwrap();
+
+        let cmds = commands.lock().unwrap();
+        // The decoded profile line must use single-quoted value with escaped single quote.
+        let profile_cmd = cmds
+            .iter()
+            .find(|c| c.contains("base64 -d >> ~/.profile"))
+            .expect("no profile injection command");
+        let b64_part = profile_cmd
+            .split_whitespace()
+            .find(|p| p.len() > 4 && !p.contains('~') && !p.contains('/'))
+            .expect("b64 token not found");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64_part)
+            .unwrap();
+        let line = String::from_utf8(decoded).unwrap();
+        assert!(
+            line.contains("ANTHROPIC_API_KEY='sk-test'\\''with'\\''quotes'"),
+            "Expected properly escaped single-quoted value, got: {line}"
+        );
     }
 
     #[test]
