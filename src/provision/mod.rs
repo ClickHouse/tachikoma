@@ -603,9 +603,7 @@ async fn inject_credentials(
             )
             .await
             .map_err(|e| {
-                crate::TachikomaError::Provision(format!(
-                    "Failed to inject keychain API key: {e}"
-                ))
+                crate::TachikomaError::Provision(format!("Failed to inject keychain API key: {e}"))
             })?;
         }
         CredentialSource::File(data) => {
@@ -1075,8 +1073,7 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(b64_part)
             .unwrap();
-        let decoded_json: serde_json::Value =
-            serde_json::from_slice(&decoded).unwrap();
+        let decoded_json: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
 
         assert!(
             decoded_json.get("mcpServers").is_none(),

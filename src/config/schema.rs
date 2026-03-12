@@ -88,13 +88,18 @@ impl Config {
             sync_gh_auth: p.sync_gh_auth.unwrap_or(false),
             share_claude_dirs: {
                 let dirs = p.share_claude_dirs.unwrap_or_else(|| {
-                    crate::CLAUDE_SHARE_DIRS.iter().map(|s| (*s).to_string()).collect()
+                    crate::CLAUDE_SHARE_DIRS
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect()
                 });
                 for d in &dirs {
                     if d.is_empty()
                         || d.contains('/')
                         || d.contains("..")
-                        || !d.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                        || !d
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
                     {
                         return Err(crate::TachikomaError::Config(format!(
                             "Invalid share_claude_dirs entry '{d}': must contain only \
