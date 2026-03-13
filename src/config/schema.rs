@@ -17,6 +17,10 @@ pub struct PartialConfig {
     pub credential_command: Option<String>,
     pub api_key_command: Option<String>,
     pub sync_gh_auth: Option<bool>,
+    /// Which ~/.claude subdirectories to share into VMs (default: rules, agents, plugins, skills)
+    pub share_claude_dirs: Option<Vec<String>>,
+    /// Whether to sync MCP server configs and their env vars into VMs (default: true)
+    pub sync_mcp_servers: Option<bool>,
 }
 
 impl PartialConfig {
@@ -36,6 +40,8 @@ impl PartialConfig {
             credential_command: other.credential_command.or(self.credential_command),
             api_key_command: other.api_key_command.or(self.api_key_command),
             sync_gh_auth: other.sync_gh_auth.or(self.sync_gh_auth),
+            share_claude_dirs: other.share_claude_dirs.or(self.share_claude_dirs),
+            sync_mcp_servers: other.sync_mcp_servers.or(self.sync_mcp_servers),
         }
     }
 }
@@ -57,6 +63,10 @@ pub struct Config {
     pub api_key_command: Option<String>,
     /// Sync host's gh CLI auth token into the VM (default: false)
     pub sync_gh_auth: bool,
+    /// Which ~/.claude subdirectories to share into VMs (default: rules, agents, plugins, skills)
+    pub share_claude_dirs: Vec<String>,
+    /// Whether to sync MCP server configs and their env vars into VMs (default: true)
+    pub sync_mcp_servers: bool,
 }
 
 impl Config {
@@ -76,6 +86,30 @@ impl Config {
             credential_command: p.credential_command,
             api_key_command: p.api_key_command,
             sync_gh_auth: p.sync_gh_auth.unwrap_or(false),
+            share_claude_dirs: {
+                let dirs = p.share_claude_dirs.unwrap_or_else(|| {
+                    crate::CLAUDE_SHARE_DIRS
+                        .iter()
+                        .map(|s| (*s).to_string())
+                        .collect()
+                });
+                for d in &dirs {
+                    if d.is_empty()
+                        || d.contains('/')
+                        || d.contains("..")
+                        || !d
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                    {
+                        return Err(crate::TachikomaError::Config(format!(
+                            "Invalid share_claude_dirs entry '{d}': must contain only \
+                             alphanumeric characters, hyphens, or underscores"
+                        )));
+                    }
+                }
+                dirs
+            },
+            sync_mcp_servers: p.sync_mcp_servers.unwrap_or(true),
         })
     }
 }
@@ -135,6 +169,11 @@ mod tests {
         assert_eq!(config.prune_after_days, 30);
         assert!(config.credential_command.is_none());
         assert!(config.api_key_command.is_none());
+        assert_eq!(
+            config.share_claude_dirs,
+            vec!["rules", "agents", "plugins", "skills"]
+        );
+        assert!(config.sync_mcp_servers);
     }
 
     #[test]
@@ -170,6 +209,8 @@ mod tests {
         assert_eq!(defaults.prune_after_days.unwrap(), 30);
         assert!(defaults.credential_command.is_none());
         assert!(defaults.api_key_command.is_none());
+        assert!(defaults.share_claude_dirs.is_none());
+        assert!(defaults.sync_mcp_servers.unwrap());
     }
 
     #[test]
@@ -189,6 +230,8 @@ mod tests {
             credential_command: Some("echo secret".to_string()),
             api_key_command: Some("echo key".to_string()),
             sync_gh_auth: Some(true),
+            share_claude_dirs: Some(vec!["rules".to_string(), "agents".to_string()]),
+            sync_mcp_servers: Some(false),
         };
         let toml_str = toml::to_string(&original).unwrap();
         let deserialized: PartialConfig = toml::from_str(&toml_str).unwrap();
@@ -199,6 +242,8 @@ mod tests {
         assert_eq!(deserialized.worktree_dir, original.worktree_dir);
         assert_eq!(deserialized.provision_scripts, original.provision_scripts);
         assert_eq!(deserialized.claude_flags, original.claude_flags);
+        assert_eq!(deserialized.share_claude_dirs, original.share_claude_dirs);
+        assert_eq!(deserialized.sync_mcp_servers, original.sync_mcp_servers);
     }
 
     #[test]
@@ -228,5 +273,53 @@ mod tests {
         assert_eq!(merged.base_image.unwrap(), "third");
         assert_eq!(merged.vm_cpus.unwrap(), 4);
         assert_eq!(merged.vm_memory.unwrap(), 2048);
+    }
+
+    #[test]
+    fn test_share_claude_dirs_valid_entries() {
+        let config = Config::from_partial(PartialConfig {
+            share_claude_dirs: Some(vec![
+                "rules".to_string(),
+                "my-agents".to_string(),
+                "custom_dir".to_string(),
+            ]),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            config.share_claude_dirs,
+            vec!["rules", "my-agents", "custom_dir"]
+        );
+    }
+
+    #[test]
+    fn test_share_claude_dirs_rejects_path_traversal() {
+        let result = Config::from_partial(PartialConfig {
+            share_claude_dirs: Some(vec!["../../.ssh".to_string()]),
+            ..Default::default()
+        });
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid share_claude_dirs entry"));
+    }
+
+    #[test]
+    fn test_share_claude_dirs_rejects_shell_metacharacters() {
+        for bad in &["rules;echo hi", "rules$(id)", "rules `id`", ""] {
+            let result = Config::from_partial(PartialConfig {
+                share_claude_dirs: Some(vec![bad.to_string()]),
+                ..Default::default()
+            });
+            assert!(result.is_err(), "expected error for entry: {bad:?}");
+        }
+    }
+
+    #[test]
+    fn test_share_claude_dirs_rejects_slash() {
+        let result = Config::from_partial(PartialConfig {
+            share_claude_dirs: Some(vec!["rules/subdir".to_string()]),
+            ..Default::default()
+        });
+        assert!(result.is_err());
     }
 }
