@@ -37,6 +37,7 @@ fn command_needs_tart(cmd: &Option<Command>) -> bool {
             | Some(Command::Mcp)
             | Some(Command::Config { .. })
             | Some(Command::Pr { .. })
+            | Some(Command::Proxy { .. })
     )
 }
 
@@ -290,6 +291,10 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
 
         Some(Command::Mcp) => {
             tachikoma::mcp::run_server().await?;
+        }
+
+        Some(Command::Proxy { action }) => {
+            tachikoma::cmd::proxy::run(action, &config).await?;
         }
     }
 

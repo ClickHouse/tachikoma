@@ -28,6 +28,12 @@ pub async fn run(
     let branch = orch.resolve_branch(branch, cwd).await?;
     let (repo_name, repo_root) = orch.resolve_repo(cwd).await?;
 
+    // Ensure the credential proxy is running before provisioning if enabled
+    if config.credential_proxy {
+        on_status("Ensuring credential proxy is running...");
+        ensure_proxy_running(config).await?;
+    }
+
     // Ensure worktree exists
     on_status("Preparing worktree...");
     let worktree_path = orch
@@ -62,6 +68,86 @@ pub async fn run(
     }
 
     Ok(result)
+}
+
+/// Ensure the credential proxy is running, starting it as a background daemon if needed.
+///
+/// - If the proxy is already reachable: return immediately.
+/// - Otherwise: spawn `tachikoma proxy` as a detached process (setsid) and wait
+///   up to 2 s for it to become reachable.
+async fn ensure_proxy_running(config: &Config) -> Result<()> {
+    let bind = &config.credential_proxy_bind;
+    let port = config.credential_proxy_port;
+
+    if crate::proxy::is_proxy_reachable(bind, port).await {
+        tracing::debug!("Credential proxy already reachable at {bind}:{port}");
+        return Ok(());
+    }
+
+    tracing::info!("Starting credential proxy at {bind}:{port}");
+
+    // Resolve the tachikoma binary path (same binary that is running now)
+    let exe = std::env::current_exe().map_err(|e| {
+        crate::TachikomaError::Proxy(format!("Cannot resolve own executable path: {e}"))
+    })?;
+
+    // Spawn detached: call setsid(2) in pre_exec to create a new session so the
+    // child survives the parent process exiting. The `setsid` CLI binary is Linux-only
+    // but the setsid(2) syscall is POSIX and available on macOS via libc.
+    #[cfg(unix)]
+    {
+        let mut cmd = tokio::process::Command::new(&exe);
+        cmd.arg("proxy")
+            .arg("start")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--bind")
+            .arg(bind)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // Safety: setsid() is async-signal-safe and safe to call in pre_exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        cmd.spawn().map_err(|e| {
+            crate::TachikomaError::Proxy(format!("Failed to spawn credential proxy: {e}"))
+        })?;
+    }
+    #[cfg(not(unix))]
+    tokio::process::Command::new(&exe)
+        .arg("proxy")
+        .arg("start")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--bind")
+        .arg(bind)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            crate::TachikomaError::Proxy(format!("Failed to spawn credential proxy: {e}"))
+        })?;
+
+    // Wait up to 2 s for the proxy to become reachable
+    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(2);
+    loop {
+        if crate::proxy::is_proxy_reachable(bind, port).await {
+            tracing::info!("Credential proxy is up at {bind}:{port}");
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            tracing::warn!("Credential proxy did not become reachable within 2 s at {bind}:{port}");
+            // Non-fatal: provisioning will still inject ANTHROPIC_BASE_URL; the proxy
+            // may come up before the VM finishes booting.
+            return Ok(());
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
 }
 
 #[cfg(test)]

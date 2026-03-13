@@ -21,6 +21,14 @@ pub struct PartialConfig {
     pub share_claude_dirs: Option<Vec<String>>,
     /// Whether to sync MCP server configs and their env vars into VMs (default: true)
     pub sync_mcp_servers: Option<bool>,
+    /// Enable the built-in credential proxy (default: false)
+    pub credential_proxy: Option<bool>,
+    /// Port the credential proxy listens on (default: 19280)
+    pub credential_proxy_port: Option<u16>,
+    /// Address the credential proxy binds to (default: "192.168.64.1")
+    pub credential_proxy_bind: Option<String>,
+    /// Credential cache TTL in seconds (default: 300)
+    pub credential_proxy_ttl_secs: Option<u64>,
 }
 
 impl PartialConfig {
@@ -42,6 +50,12 @@ impl PartialConfig {
             sync_gh_auth: other.sync_gh_auth.or(self.sync_gh_auth),
             share_claude_dirs: other.share_claude_dirs.or(self.share_claude_dirs),
             sync_mcp_servers: other.sync_mcp_servers.or(self.sync_mcp_servers),
+            credential_proxy: other.credential_proxy.or(self.credential_proxy),
+            credential_proxy_port: other.credential_proxy_port.or(self.credential_proxy_port),
+            credential_proxy_bind: other.credential_proxy_bind.or(self.credential_proxy_bind),
+            credential_proxy_ttl_secs: other
+                .credential_proxy_ttl_secs
+                .or(self.credential_proxy_ttl_secs),
         }
     }
 }
@@ -67,6 +81,14 @@ pub struct Config {
     pub share_claude_dirs: Vec<String>,
     /// Whether to sync MCP server configs and their env vars into VMs (default: true)
     pub sync_mcp_servers: bool,
+    /// Enable the built-in credential proxy (default: false)
+    pub credential_proxy: bool,
+    /// Port the credential proxy listens on (default: 19280)
+    pub credential_proxy_port: u16,
+    /// Address the credential proxy binds to (default: "192.168.64.1")
+    pub credential_proxy_bind: String,
+    /// Credential cache TTL in seconds (default: 300)
+    pub credential_proxy_ttl_secs: u64,
 }
 
 impl Config {
@@ -110,6 +132,27 @@ impl Config {
                 dirs
             },
             sync_mcp_servers: p.sync_mcp_servers.unwrap_or(true),
+            credential_proxy: p.credential_proxy.unwrap_or(true),
+            credential_proxy_port: p.credential_proxy_port.unwrap_or(19280),
+            credential_proxy_bind: {
+                let bind = p
+                    .credential_proxy_bind
+                    .unwrap_or_else(|| "192.168.64.1".to_string());
+                let addr: std::net::IpAddr = bind.parse().map_err(|_| {
+                    crate::TachikomaError::Config(format!(
+                        "Invalid credential_proxy_bind '{bind}': must be a valid IP address"
+                    ))
+                })?;
+                if addr.is_unspecified() {
+                    return Err(crate::TachikomaError::Config(
+                        "credential_proxy_bind must not be 0.0.0.0 or [::] — \
+                         the proxy would expose API keys to the network"
+                            .to_string(),
+                    ));
+                }
+                bind
+            },
+            credential_proxy_ttl_secs: p.credential_proxy_ttl_secs.unwrap_or(300),
         })
     }
 }
@@ -174,6 +217,10 @@ mod tests {
             vec!["rules", "agents", "plugins", "skills"]
         );
         assert!(config.sync_mcp_servers);
+        assert!(config.credential_proxy);
+        assert_eq!(config.credential_proxy_port, 19280);
+        assert_eq!(config.credential_proxy_bind, "192.168.64.1");
+        assert_eq!(config.credential_proxy_ttl_secs, 300);
     }
 
     #[test]
@@ -211,6 +258,13 @@ mod tests {
         assert!(defaults.api_key_command.is_none());
         assert!(defaults.share_claude_dirs.is_none());
         assert!(defaults.sync_mcp_servers.unwrap());
+        assert!(defaults.credential_proxy.unwrap());
+        assert_eq!(defaults.credential_proxy_port.unwrap(), 19280);
+        assert_eq!(
+            defaults.credential_proxy_bind.as_deref().unwrap(),
+            "192.168.64.1"
+        );
+        assert_eq!(defaults.credential_proxy_ttl_secs.unwrap(), 300);
     }
 
     #[test]
@@ -232,6 +286,10 @@ mod tests {
             sync_gh_auth: Some(true),
             share_claude_dirs: Some(vec!["rules".to_string(), "agents".to_string()]),
             sync_mcp_servers: Some(false),
+            credential_proxy: Some(true),
+            credential_proxy_port: Some(9000),
+            credential_proxy_bind: Some("0.0.0.0".to_string()),
+            credential_proxy_ttl_secs: Some(60),
         };
         let toml_str = toml::to_string(&original).unwrap();
         let deserialized: PartialConfig = toml::from_str(&toml_str).unwrap();
@@ -244,6 +302,19 @@ mod tests {
         assert_eq!(deserialized.claude_flags, original.claude_flags);
         assert_eq!(deserialized.share_claude_dirs, original.share_claude_dirs);
         assert_eq!(deserialized.sync_mcp_servers, original.sync_mcp_servers);
+        assert_eq!(deserialized.credential_proxy, original.credential_proxy);
+        assert_eq!(
+            deserialized.credential_proxy_port,
+            original.credential_proxy_port
+        );
+        assert_eq!(
+            deserialized.credential_proxy_bind,
+            original.credential_proxy_bind
+        );
+        assert_eq!(
+            deserialized.credential_proxy_ttl_secs,
+            original.credential_proxy_ttl_secs
+        );
     }
 
     #[test]
@@ -312,6 +383,39 @@ mod tests {
             });
             assert!(result.is_err(), "expected error for entry: {bad:?}");
         }
+    }
+
+    #[test]
+    fn test_credential_proxy_bind_rejects_unspecified() {
+        let result = Config::from_partial(PartialConfig {
+            credential_proxy_bind: Some("0.0.0.0".to_string()),
+            ..Default::default()
+        });
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("0.0.0.0"),
+            "Error should mention the bad value: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_credential_proxy_bind_rejects_invalid_ip() {
+        let result = Config::from_partial(PartialConfig {
+            credential_proxy_bind: Some("not-an-ip".to_string()),
+            ..Default::default()
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_credential_proxy_bind_accepts_valid_ip() {
+        let config = Config::from_partial(PartialConfig {
+            credential_proxy_bind: Some("10.0.0.1".to_string()),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(config.credential_proxy_bind, "10.0.0.1");
     }
 
     #[test]

@@ -109,7 +109,30 @@ pub async fn provision_vm(
         tracing::warn!("No credentials found. Claude will not be able to authenticate in the VM.");
     }
 
-    inject_credentials(tart, vm_name, &creds).await?;
+    if config.credential_proxy {
+        // Proxy mode: redirect Claude Code to the host proxy.
+        //
+        // ANTHROPIC_BASE_URL tells Claude Code where to send requests.
+        // ANTHROPIC_API_KEY must be non-empty or Claude Code refuses to start
+        // ("Not logged in"). The proxy strips this placeholder header and
+        // replaces it with real credentials before forwarding to Anthropic —
+        // so this value never reaches the real API.
+        let proxy_url = format!(
+            "http://{}:{}",
+            config.credential_proxy_bind, config.credential_proxy_port
+        );
+        tracing::info!("credential_proxy enabled — injecting ANTHROPIC_BASE_URL={proxy_url}");
+        let profile = format!(
+            "export ANTHROPIC_BASE_URL='{proxy_url}'\nexport ANTHROPIC_API_KEY='tachikoma-proxy'\n"
+        );
+        inject_profile_line(tart, vm_name, &profile)
+            .await
+            .map_err(|e| {
+                crate::TachikomaError::Provision(format!("Failed to inject proxy env vars: {e}"))
+            })?;
+    } else {
+        inject_credentials(tart, vm_name, &creds).await?;
+    }
 
     // 5b. Inject supplementary credentials (MCP OAuth etc.) if available
     if let Some(supplementary) = resolve_supplementary_credentials().await {
@@ -409,7 +432,21 @@ async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str, confi
 
     // Also inject each MCP server's env vars into ~/.profile so they are available
     // in the shell environment (belt-and-suspenders alongside the settings.json copy).
+    // Skip this when credential_proxy is enabled — the proxy supplies Anthropic auth,
+    // so injecting ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN here would be redundant
+    // and would undermine the zero-credentials-in-VM guarantee.
     for (key, value) in &mcp_env_vars {
+        if config.credential_proxy
+            && matches!(
+                key.as_str(),
+                "ANTHROPIC_API_KEY" | "CLAUDE_CODE_OAUTH_TOKEN" | "ANTHROPIC_BASE_URL"
+            )
+        {
+            tracing::info!(
+                "credential_proxy enabled — skipping MCP env var {key} to keep VM credential-free"
+            );
+            continue;
+        }
         if !is_valid_mcp_env_name(key) {
             tracing::warn!("Skipping invalid MCP env var name: {key}");
             continue;
@@ -672,6 +709,10 @@ mod tests {
     use crate::tart::MockTartRunner;
     use std::net::Ipv4Addr;
     use std::path::Path;
+    use std::sync::Mutex;
+
+    // Serialize tests that mutate the HOME environment variable to avoid races.
+    static HOME_LOCK: Mutex<()> = Mutex::new(());
 
     fn test_config() -> Config {
         Config::from_partial(PartialConfig::default()).unwrap()
@@ -691,8 +732,14 @@ mod tests {
 
     /// Create a temporary home directory with a pre-generated SSH key pair so that
     /// `ensure_tachikoma_key` skips `ssh-keygen` entirely. Returns the tempdir (must
-    /// be kept alive for the duration of the test) and the path to the private key.
-    fn setup_temp_home() -> (tempfile::TempDir, std::path::PathBuf) {
+    /// be kept alive for the duration of the test), the path to the private key, and
+    /// the HOME lock guard (must also be kept alive).
+    fn setup_temp_home() -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        let guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let home = tempfile::tempdir().expect("tempdir");
         let ssh_dir = home.path().join(".ssh");
         std::fs::create_dir_all(&ssh_dir).unwrap();
@@ -710,12 +757,12 @@ mod tests {
         .unwrap();
         // Point HOME at the temp dir so dirs::home_dir() and tachikoma_key_path() resolve here.
         std::env::set_var("HOME", home.path());
-        (home, key_path)
+        (home, key_path, guard)
     }
 
     #[tokio::test]
     async fn test_provision_sets_env() {
-        let (_home, _key) = setup_temp_home();
+        let (_home, _key, _guard) = setup_temp_home();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
         let tart = mock_tart_exec_ok();
 
@@ -739,7 +786,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_provision_handles_ssh_verify_failure() {
-        let (_home, _key) = setup_temp_home();
+        let (_home, _key, _guard) = setup_temp_home();
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
         let tart = mock_tart_exec_ok();
 
@@ -1042,6 +1089,8 @@ mod tests {
         let encoded_input = b64(&settings_str);
 
         // Write settings.json to a temp dir and point HOME there.
+        // Hold HOME_LOCK to avoid racing with other tests that mutate HOME.
+        let _guard = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let claude_dir = tmp.path().join(".claude");
         std::fs::create_dir_all(&claude_dir).unwrap();

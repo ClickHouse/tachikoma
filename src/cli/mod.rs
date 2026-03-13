@@ -115,6 +115,31 @@ pub enum Command {
     },
     /// Start MCP server (stdio JSON-RPC)
     Mcp,
+    /// Manage the credential proxy
+    Proxy {
+        #[command(subcommand)]
+        action: Option<ProxyAction>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProxyAction {
+    /// Start the credential proxy (default when no action given)
+    Start {
+        /// Port to listen on (overrides config)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Address to bind to (overrides config)
+        #[arg(long)]
+        bind: Option<String>,
+        /// Run as a background daemon
+        #[arg(long, short)]
+        daemon: bool,
+    },
+    /// Stop the running credential proxy
+    Stop,
+    /// Show credential proxy status
+    Status,
 }
 
 #[derive(Subcommand, Debug)]

@@ -1,6 +1,6 @@
 [package]
 name = "tachikoma"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 
 [dependencies]
@@ -21,6 +21,11 @@ async-trait = "0.1"
 libc = "0.2"
 base64 = "0.22"
 indicatif = "0.17"
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+hyper-tls = "0.6"
+http-body-util = "0.1"
+bytes = "1"
 
 [dev-dependencies]
 tokio-test = "0.4"

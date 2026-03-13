@@ -18,5 +18,9 @@ pub fn default_config() -> PartialConfig {
         sync_gh_auth: Some(false),
         share_claude_dirs: None,
         sync_mcp_servers: Some(true),
+        credential_proxy: Some(true),
+        credential_proxy_port: Some(19280),
+        credential_proxy_bind: Some("192.168.64.1".to_string()),
+        credential_proxy_ttl_secs: Some(300),
     }
 }
