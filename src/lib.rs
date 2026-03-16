@@ -4,6 +4,7 @@ pub mod config;
 pub mod doctor;
 pub mod mcp;
 pub mod provision;
+pub mod proxy;
 pub mod ssh;
 pub mod state;
 pub mod tart;
@@ -38,6 +39,9 @@ pub enum TachikomaError {
 
     #[error("MCP error: {0}")]
     Mcp(String),
+
+    #[error("Proxy error: {0}")]
+    Proxy(String),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),

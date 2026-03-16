@@ -24,9 +24,10 @@ Tachikoma is a Rust CLI + MCP server (~6,500 lines, 38 files, edition 2021) that
 src/
   lib.rs          TachikomaError, vm_name()
   cli/            Clap arg parsing, output formatting (human/json/verbose)
-  cmd/            Thin command wiring (spawn, halt, destroy, pr, list, ...)
+  cmd/            Thin command wiring (spawn, halt, destroy, pr, list, proxy, ...)
   vm/             VmOrchestrator state machine + two-phase boot detection
   provision/      SSH key gen, virtiofs mount, credential waterfall, Claude install
+  proxy/          Credential proxy server (hyper HTTP + TTL cache)
   tart/           TartRunner trait + RealTartRunner (wraps tart CLI)
   worktree/       GitWorktree trait + branch detection + worktree management
   ssh/            SshClient trait (check, run, interactive)
@@ -50,9 +51,32 @@ All external interactions are behind `#[async_trait]` traits with `#[cfg_attr(te
 
 ### Core Spawn Flow
 
-`cmd/spawn::run()` → `ensure_worktree()` → `VmOrchestrator::spawn()` (state machine: Not Found → clone+run; Stopped → run; Suspended → run; Running → reconnect) → `wait_for_boot()` (two-phase: poll `tart ip`, then TCP :22) → `provision_vm()` (only on `SpawnResult::Created`) → `ssh.connect_interactive()` (exec replaces process).
+`cmd/spawn::run()` → (if `credential_proxy=true`) `ensure_proxy_running()` → `ensure_worktree()` → `VmOrchestrator::spawn()` (state machine: Not Found → clone+run; Stopped → run; Suspended → run; Running → reconnect) → `wait_for_boot()` (two-phase: poll `tart ip`, then TCP :22) → `provision_vm()` (only on `SpawnResult::Created`) → `ssh.connect_interactive()` (exec replaces process).
 
-Provisioning steps (in order): inject SSH key → virtiofs mounts → set hostname to branch slug → write env vars to `~/.profile` → resolve + inject credentials → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
+Provisioning steps (in order): inject SSH key → virtiofs mounts → set hostname to branch slug → write env vars to `~/.profile` → resolve + inject credentials (or `ANTHROPIC_BASE_URL` when `credential_proxy=true`) → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
+
+### Credential Proxy
+
+When `credential_proxy = true`, a lightweight HTTP reverse-proxy runs on the host:
+
+```
+VM (Linux)                          HOST (macOS)
+┌──────────────┐                    ┌─────────────────────────┐
+│ Claude Code   │──── HTTP ────────▶│ tachikoma proxy :19280  │
+│ ANTHROPIC_    │  (no auth header) │  TTL cache + waterfall  │──▶ api.anthropic.com
+│ BASE_URL=     │◀── SSE response ──│  (Keychain/env/command) │    (with auth header)
+│ http://192.   │                   └─────────────────────────┘
+│ 168.64.1:     │
+│ 19280         │
+└──────────────┘
+```
+
+- **Zero credentials in VM**: only `ANTHROPIC_BASE_URL` is injected; API keys never enter the VM.
+- **Auto-started**: `tachikoma spawn` TCP-probes the bind address and starts the proxy as a detached daemon (`setsid`) if not already running.
+- **Shared across VMs**: one proxy serves all running VMs; lifecycle is independent of individual VMs.
+- **PID file**: `~/.config/tachikoma/proxy.pid` — used by `tachikoma proxy stop`.
+- **TTL cache**: credentials resolved once, refreshed after `credential_proxy_ttl_secs` (default 300 s).
+- **`GET /health`**: returns `{"status":"ok","proxy":"tachikoma"}` for diagnostics.
 
 ### Key Design Constraints
 
@@ -87,6 +111,10 @@ Provisioning steps (in order): inject SSH key → virtiofs mounts → set hostna
 | `sync_gh_auth` | bool | `false` | Sync host `gh` CLI auth into VM |
 | `share_claude_dirs` | string[] | `["rules","agents","plugins","skills"]` | `~/.claude` subdirs to virtiofs-mount and symlink into VM. Entries must match `[a-zA-Z0-9_-]`. |
 | `sync_mcp_servers` | bool | `true` | When true: preserve `mcpServers` in injected `settings.json` and export each server's `env` vars into `~/.profile`. When false: strip `mcpServers` entirely. |
+| `credential_proxy` | bool | `true` | Enable the built-in credential proxy. VM gets `ANTHROPIC_BASE_URL` instead of raw credentials. |
+| `credential_proxy_port` | u16 | `19280` | Port the credential proxy listens on. |
+| `credential_proxy_bind` | string | `"192.168.64.1"` | Address to bind (Tart vmnet bridge). Use `"0.0.0.0"` only for testing. |
+| `credential_proxy_ttl_secs` | u64 | `300` | How long to cache resolved credentials before re-running the waterfall. |
 
 ### Credential Waterfall (first match wins)
 
