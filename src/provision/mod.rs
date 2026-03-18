@@ -213,17 +213,26 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
         .await
         .ok();
 
-    // Determine GIT_DIR: for linked worktrees, point at the worktree-specific gitdir
-    let git_dir_check = format!(
-        "if [ -d /mnt/tachikoma/dotgit/worktrees/{branch} ]; then echo worktree; else echo main; fi"
-    );
-    let git_type = tart_exec(tart, vm_name, &git_dir_check)
+    // Determine GIT_DIR: for linked worktrees, the code mount has a .git FILE (not dir)
+    // containing "gitdir: /host/path/.git/worktrees/<name>".  We extract <name> and
+    // verify that the corresponding directory exists in the mounted dotgit share.
+    // We cannot use the branch name directly because git names the worktree entry after
+    // the target directory (e.g. "myrepo-feature-x"), not the branch ("feature-x").
+    let git_dir_check =
+        "gitfile=$(cat /mnt/tachikoma/code/.git 2>/dev/null); \
+         worktree_name=$(echo \"$gitfile\" | sed -n 's|.*worktrees/||p' | tr -d '\\r\\n'); \
+         if [ -n \"$worktree_name\" ] && [ -d \"/mnt/tachikoma/dotgit/worktrees/$worktree_name\" ]; then \
+           echo \"worktree:$worktree_name\"; \
+         else \
+           echo main; \
+         fi";
+    let git_type = tart_exec(tart, vm_name, git_dir_check)
         .await
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "main".to_string());
 
-    let git_dir = if git_type == "worktree" {
-        format!("/mnt/tachikoma/dotgit/worktrees/{branch}")
+    let git_dir = if let Some(worktree_name) = git_type.strip_prefix("worktree:") {
+        format!("/mnt/tachikoma/dotgit/worktrees/{worktree_name}")
     } else {
         "/mnt/tachikoma/dotgit".to_string()
     };
@@ -1200,5 +1209,55 @@ mod tests {
             .decode(encoded)
             .unwrap();
         assert_eq!(String::from_utf8(decoded).unwrap(), input);
+    }
+
+    /// Verify that mount_and_configure_git sets GIT_DIR to the worktree-specific path
+    /// when the code mount's .git file points to a linked worktree.
+    /// Regression test for the bug where `{branch}` was used as the worktree name but
+    /// git actually names the entry after the target directory (e.g. "myrepo-feature-x").
+    #[tokio::test]
+    async fn test_mount_and_configure_git_uses_worktree_gitdir() {
+        use std::sync::{Arc, Mutex};
+
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        let cmds = commands.clone();
+
+        let mut tart = MockTartRunner::new();
+        tart.expect_exec().returning(move |_, args| {
+            let cmd = args.get(2).cloned().unwrap_or_default();
+            cmds.lock().unwrap().push(cmd.clone());
+            // Simulate: .git file contains a worktrees reference; directory exists.
+            // The shell script echoes "worktree:<name>" when the worktree dir is found.
+            let stdout = if cmd.contains("cat /mnt/tachikoma/code/.git") {
+                "worktree:myrepo-feature-x".to_string()
+            } else {
+                String::new()
+            };
+            Ok(ExecOutput {
+                stdout,
+                stderr: String::new(),
+                exit_code: 0,
+            })
+        });
+
+        mount_and_configure_git(&tart, "test-vm", "feature-x")
+            .await
+            .unwrap();
+
+        let cmds = commands.lock().unwrap();
+        // The profile setup command must reference the worktree-specific GIT_DIR,
+        // not the branch name alone.
+        let profile_cmd = cmds
+            .iter()
+            .find(|c| c.contains("GIT_DIR="))
+            .expect("no GIT_DIR export found");
+        assert!(
+            profile_cmd.contains("worktrees/myrepo-feature-x"),
+            "GIT_DIR should point to worktree metadata dir, got: {profile_cmd}"
+        );
+        assert!(
+            !profile_cmd.contains("GIT_DIR=/mnt/tachikoma/dotgit'"),
+            "GIT_DIR should not be the bare dotgit root for a linked worktree"
+        );
     }
 }
