@@ -10,11 +10,11 @@ Download the latest pre-built binary using the [gh CLI](https://cli.github.com) 
 
 ```bash
 # Apple Silicon (M1/M2/M3)
-gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
+gh release download v0.2.2 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
-gh release download v0.2.0 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
+gh release download v0.2.2 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 ```
 
@@ -117,14 +117,46 @@ prune_after_days = 30           # Auto-prune threshold
 # Sync host's gh CLI auth (~/.config/gh/hosts.yml) into VM (opt-in)
 # sync_gh_auth = true
 
+# ~/.claude subdirs to virtiofs-mount and symlink into the VM (default shown)
+# share_claude_dirs = ["rules", "agents", "plugins", "skills"]
+
+# Preserve mcpServers from host settings.json and export their env vars into ~.profile
+# sync_mcp_servers = true
+
 # Custom credential resolution
 # credential_command = "op read op://vault/claude/credential"
 # api_key_command = "op read op://vault/anthropic/api-key"
+
+# Credential proxy (enabled by default) — keeps API keys off the VM entirely
+# credential_proxy = true
+# credential_proxy_port = 19280
+# credential_proxy_bind = "192.168.64.1"   # Tart vmnet bridge; use "0.0.0.0" only for testing
+# credential_proxy_ttl_secs = 300
 ```
+
+## Credential Proxy
+
+By default (`credential_proxy = true`), Tachikoma runs a lightweight HTTP proxy on the host that handles all Anthropic API authentication. The VM receives only `ANTHROPIC_BASE_URL` pointing at the proxy — the actual API key or OAuth token never enters the VM.
+
+```
+VM (Linux)                          HOST (macOS)
+┌──────────────┐                    ┌─────────────────────────┐
+│ Claude Code   │──── HTTP ────────▶│ tachikoma proxy :19280  │
+│ ANTHROPIC_    │  (no auth header) │  TTL cache + waterfall  │──▶ api.anthropic.com
+│ BASE_URL=     │◀── SSE response ──│  (Keychain/env/command) │    (with auth header)
+│ http://192.   │                   └─────────────────────────┘
+│ 168.64.1:     │
+│ 19280         │
+└──────────────┘
+```
+
+The proxy is auto-started on `tachikoma spawn`, shared across all running VMs, and managed via `tachikoma proxy start/stop/status`. Use `tachikoma proxy --help` for details.
+
+To disable and inject credentials directly into the VM instead, set `credential_proxy = false`.
 
 ## Credential Resolution
 
-Tachikoma automatically finds and injects Claude credentials into the VM, trying sources in order:
+Credentials are resolved on the host (by the proxy, or injected directly if `credential_proxy = false`), trying sources in order — first match wins:
 
 1. macOS Keychain (`Claude Code-credentials`)
 2. `CLAUDE_CODE_OAUTH_TOKEN` env var
@@ -160,7 +192,7 @@ Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`hist
 
 Environment (set in `~/.profile`):
 ```bash
-GIT_DIR=/mnt/tachikoma/dotgit        # or .../worktrees/<branch> for linked worktrees
+GIT_DIR=/mnt/tachikoma/dotgit        # or .../worktrees/<name> for linked worktrees
 GIT_WORK_TREE=/mnt/tachikoma/code
 TACHIKOMA=1
 ```
@@ -226,13 +258,13 @@ Releases are built and published via GitHub Actions for both Apple Silicon and I
 
 **Steps:**
 
-1. Bump `version` in `Cargo.toml` on `main`:
+1. Bump `version` in `Cargo.toml` on a feature branch:
    ```toml
-   version = "0.2.0"
+   version = "0.2.2"
    ```
-2. Open a PR, get it merged.
-3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.0`).
-4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.0`, and publishes a GitHub Release with the binaries attached.
+2. Open a PR, get it merged to `main`.
+3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.2`).
+4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.2`, and publishes a GitHub Release with the binaries attached.
 
 The released binaries are stripped and statically linked — no Rust toolchain needed to run them.
 
