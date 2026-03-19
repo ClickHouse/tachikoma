@@ -136,10 +136,8 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             );
         }
 
-        Some(Command::Enter) => {
-            let branch = git.current_branch(&cwd).await?;
-            let (repo_name, _) = resolve_repo(&git, &cwd).await?;
-            let vm_name = tachikoma::vm_name(&repo_name, &branch);
+        Some(Command::Enter { name }) => {
+            let vm_name = resolve_vm_name(name, &git, &cwd).await?;
             tachikoma::cmd::enter::run(&vm_name, &ssh, &state_store, &config.ssh_user).await?;
         }
 
@@ -153,7 +151,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             print!("{output}");
         }
 
-        Some(Command::Halt { name }) => {
+        Some(Command::Halt { name } | Command::Stop { name }) => {
             let vm_name = resolve_vm_name(name, &git, &cwd).await?;
             tachikoma::cmd::halt::run(&vm_name, &tart, &state_store).await?;
             print_success(mode, &format!("Stopped {vm_name}"), None);
@@ -165,7 +163,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             print_success(mode, &format!("Stopped {vm_name}"), None);
         }
 
-        Some(Command::Destroy { name, force }) => {
+        Some(Command::Destroy { name, force } | Command::Delete { name, force }) => {
             let vm_name = resolve_vm_name(name, &git, &cwd).await?;
             if !force {
                 eprint!("Destroy VM '{vm_name}'? This cannot be undone. [y/N] ");
