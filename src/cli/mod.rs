@@ -44,12 +44,8 @@ pub enum Command {
         cmd: Vec<String>,
     },
     /// Stop a VM
+    #[command(visible_alias = "stop")]
     Halt {
-        /// VM name (defaults to current branch VM)
-        name: Option<String>,
-    },
-    /// Stop a VM (alias for halt)
-    Stop {
         /// VM name (defaults to current branch VM)
         name: Option<String>,
     },
@@ -59,15 +55,8 @@ pub enum Command {
         name: Option<String>,
     },
     /// Destroy a VM and its state
+    #[command(visible_alias = "delete")]
     Destroy {
-        /// VM name (defaults to current branch VM)
-        name: Option<String>,
-        /// Skip confirmation prompt
-        #[arg(long)]
-        force: bool,
-    },
-    /// Destroy a VM and its state (alias for destroy)
-    Delete {
         /// VM name (defaults to current branch VM)
         name: Option<String>,
         /// Skip confirmation prompt
