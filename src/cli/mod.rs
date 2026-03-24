@@ -33,7 +33,10 @@ pub enum Command {
         branch: Option<String>,
     },
     /// SSH into a running VM
-    Enter,
+    Enter {
+        /// VM name (defaults to current branch VM)
+        name: Option<String>,
+    },
     /// Execute a command in the VM
     Exec {
         /// Command and arguments to execute
@@ -41,6 +44,7 @@ pub enum Command {
         cmd: Vec<String>,
     },
     /// Stop a VM
+    #[command(visible_alias = "stop")]
     Halt {
         /// VM name (defaults to current branch VM)
         name: Option<String>,
@@ -51,6 +55,7 @@ pub enum Command {
         name: Option<String>,
     },
     /// Destroy a VM and its state
+    #[command(visible_alias = "delete")]
     Destroy {
         /// VM name (defaults to current branch VM)
         name: Option<String>,
