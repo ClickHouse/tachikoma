@@ -10,11 +10,11 @@ Download the latest pre-built binary using the [gh CLI](https://cli.github.com) 
 
 ```bash
 # Apple Silicon (M1/M2/M3)
-gh release download v0.2.2 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
+gh release download v0.2.3 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
-gh release download v0.2.2 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
+gh release download v0.2.3 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 ```
 
@@ -111,8 +111,8 @@ prune_after_days = 30           # Auto-prune threshold
 # Custom worktree location (default: sibling of repo root)
 # worktree_dir = "/path/to/worktrees"
 
-# Additional provisioning scripts to run in the VM
-# provision_scripts = ["setup.sh"]
+# Additional provisioning scripts to run in the VM (see examples/install-tools.sh)
+# provision_scripts = ["./examples/install-tools.sh"]
 
 # Sync host's gh CLI auth (~/.config/gh/hosts.yml) into VM (opt-in)
 # sync_gh_auth = true
@@ -172,7 +172,7 @@ Inside the VM:
 
 ```
 /mnt/tachikoma/code/            # Worktree (writable virtiofs — Claude can edit files)
-/mnt/tachikoma/dotgit/          # .git directory (read-only virtiofs)
+/mnt/tachikoma/dotgit/          # .git directory (writable virtiofs)
 /mnt/tachikoma/claude-rules/    # ~/.claude/rules (read-only virtiofs)
 /mnt/tachikoma/claude-agents/   # ~/.claude/agents (read-only virtiofs)
 /mnt/tachikoma/claude-plugins/  # ~/.claude/plugins (read-only virtiofs)
@@ -188,7 +188,7 @@ Inside the VM:
 
 Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`history.jsonl`, `projects/`, `debug/`, `file-history/`) is never exposed. The host `settings.json` is stripped of hooks, statusLine, and macOS-specific deny rules before injection.
 
-**Note:** The `.git` directory is mounted read-only. Claude can edit source files freely but cannot run `git` commands inside the VM. Use `tachikoma pr` from the host to commit changes and open a PR.
+**Note:** The `.git` directory is mounted writable — Claude has full git access inside the VM (commit, push, branch, worktree). `tachikoma pr` remains available as a convenience from the host.
 
 Environment (set in `~/.profile`):
 ```bash
@@ -264,7 +264,7 @@ Releases are built and published via GitHub Actions for both Apple Silicon and I
    ```
 2. Open a PR, get it merged to `main`.
 3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.2`).
-4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.2`, and publishes a GitHub Release with the binaries attached.
+4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.3`, and publishes a GitHub Release with the binaries attached.
 
 The released binaries are stripped and statically linked — no Rust toolchain needed to run them.
 

@@ -80,7 +80,7 @@ VM (Linux)                          HOST (macOS)
 
 ### Key Design Constraints
 
-- **`.git` is read-only in the VM** — Claude can edit source files but cannot run git commands inside the VM. Use `tachikoma pr` on the host to commit and push.
+- **`.git` is writable in the VM** — Claude has full git access inside the VM (commit, push, branch, worktree). `tachikoma pr` remains available as a convenience from the host side.
 - **Credentials are base64-encoded** before injection via `tart exec` to avoid shell escaping issues. Credential values are single-quoted with POSIX escaping in `~/.profile`. Proxy env var names are validated against `[A-Z0-9_]+`; MCP env var names allow lowercase (`[a-zA-Z_][a-zA-Z0-9_]*`).
 - **`settings.json` is stripped** of `hooks`, `statusLine`, and macOS `~/Library/` deny rules before injection into the VM. `mcpServers` is preserved (or stripped when `sync_mcp_servers = false`).
 - **`share_claude_dirs`** entries are validated to `[a-zA-Z0-9_-]` only — no slashes or `..` — to prevent path traversal from repo-level config.

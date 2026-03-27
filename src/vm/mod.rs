@@ -100,11 +100,13 @@ impl<'a> VmOrchestrator<'a> {
     ) -> Result<PathBuf> {
         let worktrees = self.git.list_worktrees(repo_root).await?;
 
-        // Check if a worktree already exists for this branch
+        // Check if a linked worktree already exists for this branch.
+        // Skip the main worktree — reusing it breaks isolation (switching
+        // branches on the host would change what the VM sees).
         for wt in &worktrees {
-            if wt.branch.as_deref() == Some(branch) {
+            if wt.branch.as_deref() == Some(branch) && !wt.is_main {
                 tracing::debug!(
-                    "Found existing worktree for branch '{branch}' at {:?}",
+                    "Found existing linked worktree for branch '{branch}' at {:?}",
                     wt.path
                 );
                 return Ok(wt.path.clone());
@@ -238,13 +240,13 @@ impl<'a> VmOrchestrator<'a> {
             read_only: false,
         }];
 
-        // Mount .git directory read-only
+        // Mount .git directory writable so Claude can use git inside the VM
         let git_dir = repo_root.join(".git");
         if git_dir.exists() {
             dirs.push(DirMount {
                 name: Some("dotgit".into()),
                 host_path: git_dir,
-                read_only: true,
+                read_only: false,
             });
         }
 
@@ -633,8 +635,84 @@ mod tests {
         assert!(!code_mount.read_only, "code mount must be writable");
     }
 
+    #[tokio::test]
+    async fn test_ensure_worktree_skips_main_worktree() {
+        use crate::worktree::WorktreeInfo;
+
+        let tart = MockTartRunner::new();
+        let ssh = MockSshClient::new();
+        let state_store = MockStateStore::new();
+        let config = test_config();
+
+        let mut git = MockGitWorktree::new();
+
+        // list_worktrees returns the main worktree on "main" branch
+        git.expect_list_worktrees().returning(|_| {
+            Ok(vec![WorktreeInfo {
+                path: PathBuf::from("/tmp/repo"),
+                branch: Some("main".to_string()),
+                is_main: true,
+            }])
+        });
+
+        // Expect create_worktree to be called because main worktree should be skipped
+        git.expect_create_worktree()
+            .withf(|_repo, branch, target| {
+                branch == "main" && target.to_string_lossy().contains("myrepo-main")
+            })
+            .returning(|_, _, target| Ok(target.to_path_buf()));
+
+        let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
+        let result = orch
+            .ensure_worktree(Path::new("/tmp/repo"), "main", "myrepo")
+            .await
+            .unwrap();
+
+        // Should NOT be the main worktree path
+        assert_ne!(result, PathBuf::from("/tmp/repo"));
+        assert!(result.to_string_lossy().contains("myrepo-main"));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_worktree_reuses_existing_linked_worktree() {
+        use crate::worktree::WorktreeInfo;
+
+        let tart = MockTartRunner::new();
+        let ssh = MockSshClient::new();
+        let state_store = MockStateStore::new();
+        let config = test_config();
+
+        let mut git = MockGitWorktree::new();
+
+        git.expect_list_worktrees().returning(|_| {
+            Ok(vec![
+                WorktreeInfo {
+                    path: PathBuf::from("/tmp/repo"),
+                    branch: Some("main".to_string()),
+                    is_main: true,
+                },
+                WorktreeInfo {
+                    path: PathBuf::from("/tmp/repo-feature-x"),
+                    branch: Some("feature-x".to_string()),
+                    is_main: false,
+                },
+            ])
+        });
+
+        // create_worktree should NOT be called — the linked worktree already exists
+        // (mockall will panic if an unexpected call happens)
+
+        let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
+        let result = orch
+            .ensure_worktree(Path::new("/tmp/repo"), "feature-x", "myrepo")
+            .await
+            .unwrap();
+
+        assert_eq!(result, PathBuf::from("/tmp/repo-feature-x"));
+    }
+
     #[test]
-    fn test_build_run_opts_dotgit_mount_is_readonly() {
+    fn test_build_run_opts_dotgit_mount_is_writable() {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().unwrap();
@@ -657,6 +735,9 @@ mod tests {
             .iter()
             .find(|d| d.name.as_deref() == Some("dotgit"))
             .unwrap();
-        assert!(dotgit.read_only, "dotgit mount must stay read-only");
+        assert!(
+            !dotgit.read_only,
+            "dotgit mount must be writable for git access in VM"
+        );
     }
 }
