@@ -237,15 +237,19 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
         "/mnt/tachikoma/dotgit".to_string()
     };
 
-    // Set up git environment in profile
-    let profile_cmds = format!(
-        "echo 'export GIT_DIR={git_dir}' >> ~/.profile && \
-         echo 'export GIT_WORK_TREE=/mnt/tachikoma/code' >> ~/.profile && \
-         echo 'cd /mnt/tachikoma/code' >> ~/.profile"
-    );
-    tart_exec(tart, vm_name, &profile_cmds).await.map_err(|e| {
-        crate::TachikomaError::Provision(format!("Failed to set git environment: {e}"))
+    // Rewrite the .git file in the code mount to point to the VM-local dotgit path.
+    // This lets git auto-discover GIT_DIR when inside ~/code, without polluting the
+    // global environment.  Global GIT_DIR/GIT_WORK_TREE exports break `git clone`
+    // for unrelated repos (e.g. Claude Code plugin marketplace downloads — issue #18).
+    let rewrite_git = format!("echo 'gitdir: {git_dir}' > /mnt/tachikoma/code/.git");
+    tart_exec(tart, vm_name, &rewrite_git).await.map_err(|e| {
+        crate::TachikomaError::Provision(format!("Failed to rewrite .git file: {e}"))
     })?;
+
+    // Only cd into the code directory — no global GIT_DIR or GIT_WORK_TREE exports
+    tart_exec(tart, vm_name, "echo 'cd /mnt/tachikoma/code' >> ~/.profile")
+        .await
+        .map_err(|e| crate::TachikomaError::Provision(format!("Failed to set profile: {e}")))?;
 
     // Set VM hostname to branch slug so shell prompt shows admin@<branch>
     let hostname = crate::branch_slug(branch);
@@ -1211,12 +1215,11 @@ mod tests {
         assert_eq!(String::from_utf8(decoded).unwrap(), input);
     }
 
-    /// Verify that mount_and_configure_git sets GIT_DIR to the worktree-specific path
-    /// when the code mount's .git file points to a linked worktree.
-    /// Regression test for the bug where `{branch}` was used as the worktree name but
-    /// git actually names the entry after the target directory (e.g. "myrepo-feature-x").
+    /// Verify that mount_and_configure_git rewrites the .git file to point to the
+    /// VM-local dotgit worktree path, and does NOT export GIT_DIR or GIT_WORK_TREE
+    /// globally (which would break Claude Code plugin downloads — issue #18).
     #[tokio::test]
-    async fn test_mount_and_configure_git_uses_worktree_gitdir() {
+    async fn test_mount_and_configure_git_rewrites_dotgit_file() {
         use std::sync::{Arc, Mutex};
 
         let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
@@ -1227,7 +1230,6 @@ mod tests {
             let cmd = args.get(2).cloned().unwrap_or_default();
             cmds.lock().unwrap().push(cmd.clone());
             // Simulate: .git file contains a worktrees reference; directory exists.
-            // The shell script echoes "worktree:<name>" when the worktree dir is found.
             let stdout = if cmd.contains("cat /mnt/tachikoma/code/.git") {
                 "worktree:myrepo-feature-x".to_string()
             } else {
@@ -1245,19 +1247,31 @@ mod tests {
             .unwrap();
 
         let cmds = commands.lock().unwrap();
-        // The profile setup command must reference the worktree-specific GIT_DIR,
-        // not the branch name alone.
-        let profile_cmd = cmds
+
+        // Must rewrite the .git file to point to the VM-local dotgit worktree path
+        let rewrite_cmd = cmds
             .iter()
-            .find(|c| c.contains("GIT_DIR="))
-            .expect("no GIT_DIR export found");
+            .find(|c| c.contains("/mnt/tachikoma/code/.git") && c.contains("gitdir:"))
+            .expect("should rewrite .git file with VM-local gitdir path");
         assert!(
-            profile_cmd.contains("worktrees/myrepo-feature-x"),
-            "GIT_DIR should point to worktree metadata dir, got: {profile_cmd}"
+            rewrite_cmd.contains("worktrees/myrepo-feature-x"),
+            "rewritten .git should reference worktree dir, got: {rewrite_cmd}"
         );
+
+        // Must NOT export GIT_DIR or GIT_WORK_TREE globally in ~/.profile
+        let has_git_dir_export = cmds.iter().any(|c| c.contains("export GIT_DIR="));
         assert!(
-            !profile_cmd.contains("GIT_DIR=/mnt/tachikoma/dotgit'"),
-            "GIT_DIR should not be the bare dotgit root for a linked worktree"
+            !has_git_dir_export,
+            "must not export GIT_DIR globally — breaks git clone for plugins"
         );
+        let has_git_work_tree_export = cmds.iter().any(|c| c.contains("export GIT_WORK_TREE="));
+        assert!(
+            !has_git_work_tree_export,
+            "must not export GIT_WORK_TREE globally — breaks git clone for plugins"
+        );
+
+        // Must still cd into code directory
+        let has_cd = cmds.iter().any(|c| c.contains("cd /mnt/tachikoma/code"));
+        assert!(has_cd, "should still cd into code directory in ~/.profile");
     }
 }

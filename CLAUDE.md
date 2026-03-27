@@ -53,7 +53,7 @@ All external interactions are behind `#[async_trait]` traits with `#[cfg_attr(te
 
 `cmd/spawn::run()` → (if `credential_proxy=true`) `ensure_proxy_running()` → `ensure_worktree()` → `VmOrchestrator::spawn()` (state machine: Not Found → clone+run; Stopped → run; Suspended → run; Running → reconnect) → `wait_for_boot()` (two-phase: poll `tart ip`, then TCP :22) → `provision_vm()` (only on `SpawnResult::Created`) → `ssh.connect_interactive()` (exec replaces process).
 
-Provisioning steps (in order): inject SSH key → virtiofs mounts → set hostname to branch slug → write env vars to `~/.profile` → resolve + inject credentials (or `ANTHROPIC_BASE_URL` when `credential_proxy=true`) → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
+Provisioning steps (in order): inject SSH key → virtiofs mounts → rewrite `.git` file to VM-local dotgit path → set hostname to branch slug → resolve + inject credentials (or `ANTHROPIC_BASE_URL` when `credential_proxy=true`) → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
 
 ### Credential Proxy
 

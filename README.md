@@ -190,11 +190,12 @@ Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`hist
 
 **Note:** The `.git` directory is mounted writable — Claude has full git access inside the VM (commit, push, branch, worktree). `tachikoma pr` remains available as a convenience from the host.
 
+Git discovers `GIT_DIR` automatically from the `.git` file in the code mount (rewritten during provisioning to point at the VM-local dotgit path). No global `GIT_DIR` or `GIT_WORK_TREE` exports — this keeps `git clone` working for unrelated repos (e.g. Claude Code plugins).
+
 Environment (set in `~/.profile`):
 ```bash
-GIT_DIR=/mnt/tachikoma/dotgit        # or .../worktrees/<name> for linked worktrees
-GIT_WORK_TREE=/mnt/tachikoma/code
 TACHIKOMA=1
+cd /mnt/tachikoma/code               # start in the repo
 ```
 
 ## Typical Workflow
