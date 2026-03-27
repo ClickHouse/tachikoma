@@ -166,6 +166,31 @@ Credentials are resolved on the host (by the proxy, or injected directly if `cre
 6. Configured `api_key_command`
 7. Proxy env vars (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `ANTHROPIC_BASE_URL`)
 
+## Docker Forwarding (Optional)
+
+VMs can use the host's Docker daemon without running a Docker engine inside the VM. A `socat` bridge on the host forwards TCP to the Docker socket:
+
+```
+VM (Linux)                          HOST (macOS)
+┌──────────────┐                    ┌─────────────────────────────┐
+│ docker CLI    │──── TCP ─────────▶│ socat :2375                 │
+│ DOCKER_HOST=  │                   │   ↓                         │
+│ tcp://192.    │◀── response ──────│ Docker socket               │
+│ 168.64.1:    │                    │   ↓                         │
+│ 2375          │                   │ Docker Desktop / OrbStack   │
+└──────────────┘                    └─────────────────────────────┘
+```
+
+```bash
+# On the host — start the bridge (auto-detects Docker Desktop or OrbStack)
+./examples/docker-bridge-start.sh --bg
+
+# In .tachikoma.toml — install Docker CLI in VM on provision
+provision_scripts = ["./examples/docker-host-forwarding.sh"]
+```
+
+> **Security warning:** Docker socket access grants effective root on the host. Any process in the VM can mount host filesystems, access the host network, and start unlimited containers. Only use on trusted, single-user dev machines.
+
 ## VM Filesystem Layout
 
 Inside the VM:
