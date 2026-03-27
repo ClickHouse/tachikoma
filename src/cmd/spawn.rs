@@ -195,11 +195,18 @@ mod tests {
         git.expect_find_repo_root()
             .returning(|_| Ok(PathBuf::from("/tmp/myrepo")));
         git.expect_list_worktrees().returning(|_| {
-            Ok(vec![WorktreeInfo {
-                path: PathBuf::from("/tmp/myrepo"),
-                branch: Some("main".to_string()),
-                is_main: true,
-            }])
+            Ok(vec![
+                WorktreeInfo {
+                    path: PathBuf::from("/tmp/myrepo"),
+                    branch: Some("main".to_string()),
+                    is_main: true,
+                },
+                WorktreeInfo {
+                    path: PathBuf::from("/tmp/myrepo-main"),
+                    branch: Some("main".to_string()),
+                    is_main: false,
+                },
+            ])
         });
 
         let mut state_store = MockStateStore::new();
