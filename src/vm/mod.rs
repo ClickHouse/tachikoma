@@ -240,13 +240,13 @@ impl<'a> VmOrchestrator<'a> {
             read_only: false,
         }];
 
-        // Mount .git directory read-only
+        // Mount .git directory writable so Claude can use git inside the VM
         let git_dir = repo_root.join(".git");
         if git_dir.exists() {
             dirs.push(DirMount {
                 name: Some("dotgit".into()),
                 host_path: git_dir,
-                read_only: true,
+                read_only: false,
             });
         }
 
@@ -712,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_run_opts_dotgit_mount_is_readonly() {
+    fn test_build_run_opts_dotgit_mount_is_writable() {
         use tempfile::TempDir;
 
         let tmp = TempDir::new().unwrap();
@@ -735,6 +735,9 @@ mod tests {
             .iter()
             .find(|d| d.name.as_deref() == Some("dotgit"))
             .unwrap();
-        assert!(dotgit.read_only, "dotgit mount must stay read-only");
+        assert!(
+            !dotgit.read_only,
+            "dotgit mount must be writable for git access in VM"
+        );
     }
 }
