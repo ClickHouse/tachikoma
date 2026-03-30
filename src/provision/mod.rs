@@ -231,20 +231,34 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "main".to_string());
 
-    let git_dir = if let Some(worktree_name) = git_type.strip_prefix("worktree:") {
-        format!("/mnt/tachikoma/dotgit/worktrees/{worktree_name}")
-    } else {
-        "/mnt/tachikoma/dotgit".to_string()
-    };
-
-    // Rewrite the .git file in the code mount to point to the VM-local dotgit path.
-    // This lets git auto-discover GIT_DIR when inside ~/code, without polluting the
-    // global environment.  Global GIT_DIR/GIT_WORK_TREE exports break `git clone`
-    // for unrelated repos (e.g. Claude Code plugin marketplace downloads — issue #18).
-    let rewrite_git = format!("echo 'gitdir: {git_dir}' > /mnt/tachikoma/code/.git");
-    tart_exec(tart, vm_name, &rewrite_git).await.map_err(|e| {
-        crate::TachikomaError::Provision(format!("Failed to rewrite .git file: {e}"))
-    })?;
+    // For linked worktrees: the code mount contains a .git FILE with content:
+    //   gitdir: /Users/sak/Clickhouse/repo/.git/worktrees/<name>
+    // That host path does not exist inside the VM. Instead of rewriting the shared .git
+    // file (which would corrupt the host copy — issue #24), create a symlink inside the VM
+    // at that exact host path, pointing to the VM-local dotgit worktree directory.
+    //
+    // Git reads the .git file, gets the host-format path, then resolves the symlink to
+    // /mnt/tachikoma/dotgit/worktrees/<name> — which does exist in the VM.
+    // git uses realpath() internally so `commondir: ../../` resolves correctly too.
+    //
+    // The .git file is NEVER modified, so the host copy remains valid.
+    // No global GIT_DIR export (that breaks `git clone` for plugins — issue #18).
+    if let Some(worktree_name) = git_type.strip_prefix("worktree:") {
+        let symlink_cmd = format!(
+            "host_gitdir=$(sed 's/^gitdir: //' /mnt/tachikoma/code/.git | tr -d '\\r\\n'); \
+             sudo mkdir -p \"$(dirname \"$host_gitdir\")\"; \
+             sudo ln -sfn \"/mnt/tachikoma/dotgit/worktrees/{worktree_name}\" \"$host_gitdir\""
+        );
+        tart_exec(tart, vm_name, &symlink_cmd).await.map_err(|e| {
+            crate::TachikomaError::Provision(format!(
+                "Failed to create worktree git symlink in VM: {e}"
+            ))
+        })?;
+        tracing::info!(
+            "Created VM symlink for worktree '{worktree_name}' (host .git file unchanged)"
+        );
+    }
+    // For main worktrees, .git is a directory — no rewrite or symlink needed.
 
     // Only cd into the code directory — no global GIT_DIR or GIT_WORK_TREE exports
     tart_exec(tart, vm_name, "echo 'cd /mnt/tachikoma/code' >> ~/.profile")
@@ -271,7 +285,7 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
     .await
     .ok();
 
-    tracing::info!("Mounted virtiofs shares and configured git (GIT_DIR={git_dir})");
+    tracing::info!("Mounted virtiofs shares and configured git for branch '{branch}'");
     Ok(())
 }
 
@@ -1215,11 +1229,12 @@ mod tests {
         assert_eq!(String::from_utf8(decoded).unwrap(), input);
     }
 
-    /// Verify that mount_and_configure_git rewrites the .git file to point to the
-    /// VM-local dotgit worktree path, and does NOT export GIT_DIR or GIT_WORK_TREE
-    /// globally (which would break Claude Code plugin downloads — issue #18).
+    /// Verify that mount_and_configure_git creates a VM-local symlink so git inside
+    /// the VM can resolve the host-format path from the unchanged .git pointer file.
+    /// The shared .git file must NOT be rewritten (which would corrupt the host — issue #24).
+    /// Must also NOT export GIT_DIR or GIT_WORK_TREE globally (issue #18).
     #[tokio::test]
-    async fn test_mount_and_configure_git_rewrites_dotgit_file() {
+    async fn test_mount_and_configure_git_creates_worktree_symlink() {
         use std::sync::{Arc, Mutex};
 
         let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
@@ -1248,14 +1263,25 @@ mod tests {
 
         let cmds = commands.lock().unwrap();
 
-        // Must rewrite the .git file to point to the VM-local dotgit worktree path
-        let rewrite_cmd = cmds
+        // Must NOT rewrite the shared .git file (that would corrupt the host — issue #24).
+        // The write form is `> /mnt/tachikoma/code/.git`; a `sed` read of the same path
+        // is fine and expected (the symlink command reads the path to get the host gitdir).
+        let wrote_git_file = cmds
             .iter()
-            .find(|c| c.contains("/mnt/tachikoma/code/.git") && c.contains("gitdir:"))
-            .expect("should rewrite .git file with VM-local gitdir path");
+            .any(|c| c.contains("> /mnt/tachikoma/code/.git"));
         assert!(
-            rewrite_cmd.contains("worktrees/myrepo-feature-x"),
-            "rewritten .git should reference worktree dir, got: {rewrite_cmd}"
+            !wrote_git_file,
+            "must not rewrite /mnt/tachikoma/code/.git — that file is shared with the host"
+        );
+
+        // Must create a symlink inside the VM pointing to the VM-local dotgit worktree dir
+        let symlink_cmd = cmds
+            .iter()
+            .find(|c| c.contains("ln -sfn") && c.contains("worktrees/myrepo-feature-x"))
+            .expect("should create a symlink for the worktree dotgit directory");
+        assert!(
+            symlink_cmd.contains("/mnt/tachikoma/dotgit/worktrees/myrepo-feature-x"),
+            "symlink target should be VM-local dotgit worktree dir, got: {symlink_cmd}"
         );
 
         // Must NOT export GIT_DIR or GIT_WORK_TREE globally in ~/.profile
