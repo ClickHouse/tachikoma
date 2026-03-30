@@ -59,7 +59,13 @@ async fn poll_for_ip(
     loop {
         if tokio::time::Instant::now() >= deadline {
             return Err(crate::TachikomaError::Vm(format!(
-                "Timed out waiting for VM '{vm_name}' to acquire an IP address"
+                "Timed out waiting for VM '{vm_name}' to get an IP address.\n\
+                 The VM is running but DHCP didn't assign an IP in time.\n\
+                 Try:\n  \
+                   tart ip --resolver arp {vm_name}\n  \
+                   tart ip --wait 30 {vm_name}\n  \
+                   sudo launchctl kickstart -k system/com.apple.bootpd  # restart DHCP\n\
+                 If the VM is stuck, clean it up with: tachikoma destroy {vm_name}"
             )));
         }
 
@@ -221,6 +227,10 @@ mod tests {
         assert!(
             err.contains("Timed out"),
             "Expected timeout error, got: {err}"
+        );
+        assert!(
+            err.contains("tart ip --resolver arp"),
+            "Timeout error should include diagnostic hints, got: {err}"
         );
     }
 
