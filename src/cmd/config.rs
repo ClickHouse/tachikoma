@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use crate::cli::output::{print_success, OutputMode};
-use crate::config::ConfigLoader;
 use crate::Result;
+use crate::cli::output::{OutputMode, print_success};
+use crate::config::ConfigLoader;
 
 pub async fn run(
     edit: bool,

@@ -1,7 +1,7 @@
+use crate::Result;
 use crate::ssh::SshClient;
 use crate::tart::{RunOpts, TartRunner};
-use crate::vm::boot::{wait_for_boot, BootConfig};
-use crate::Result;
+use crate::vm::boot::{BootConfig, wait_for_boot};
 
 pub const DEFAULT_GOLDEN_IMAGE: &str = "tachikoma-golden";
 const BUILDER_VM: &str = "tachikoma-builder";
@@ -128,8 +128,8 @@ async fn cleanup(tart: &dyn TartRunner, builder: &str, golden: &str, force: bool
 mod tests {
     use super::*;
     use crate::ssh::MockSshClient;
-    use crate::tart::types::{ExecOutput, TartVmInfo};
     use crate::tart::MockTartRunner;
+    use crate::tart::types::{ExecOutput, TartVmInfo};
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{Arc, Mutex};
 

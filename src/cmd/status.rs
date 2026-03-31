@@ -1,7 +1,7 @@
-use crate::cli::output::{print_success, OutputMode};
+use crate::Result;
+use crate::cli::output::{OutputMode, print_success};
 use crate::state::StateStore;
 use crate::tart::TartRunner;
-use crate::Result;
 
 pub async fn run(
     vm_name: &str,

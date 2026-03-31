@@ -1,7 +1,7 @@
-use crate::cli::output::{print_table, OutputMode};
+use crate::Result;
+use crate::cli::output::{OutputMode, print_table};
 use crate::state::StateStore;
 use crate::tart::TartRunner;
-use crate::Result;
 
 pub async fn run(
     repo_filter: Option<&str>,

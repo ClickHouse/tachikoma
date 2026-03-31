@@ -1,6 +1,6 @@
 use clap::{CommandFactory, Parser};
 use indicatif::{ProgressBar, ProgressStyle};
-use tachikoma::cli::output::{print_error, print_success, OutputMode};
+use tachikoma::cli::output::{OutputMode, print_error, print_success};
 use tachikoma::cli::{Cli, Command, ImageAction, SshAction};
 use tachikoma::config::{ConfigLoader, FileConfigLoader};
 use tachikoma::ssh::RealSshClient;

@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::state::{StateStore, VmStatus};
 use crate::tart::TartRunner;
-use crate::Result;
 
 pub async fn run(vm_name: &str, tart: &dyn TartRunner, state_store: &dyn StateStore) -> Result<()> {
     tart.stop(vm_name).await?;

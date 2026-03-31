@@ -1,9 +1,9 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
+use crate::Result;
 use crate::ssh::SshClient;
 use crate::tart::TartRunner;
-use crate::Result;
 
 /// Boot detection configuration
 #[derive(Debug, Clone)]
@@ -163,11 +163,7 @@ mod tests {
         let mut mock_tart = MockTartRunner::new();
         mock_tart.expect_ip_wait().returning(move |_, _| {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
-            if count < 2 {
-                Ok(None)
-            } else {
-                Ok(Some(ip))
-            }
+            if count < 2 { Ok(None) } else { Ok(Some(ip)) }
         });
 
         let mut mock_ssh = MockSshClient::new();

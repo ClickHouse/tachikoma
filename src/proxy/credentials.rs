@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
-use crate::provision::credentials::{resolve_credentials, CredentialSource};
+use crate::provision::credentials::{CredentialSource, resolve_credentials};
 
 struct CacheEntry {
     credentials: CredentialSource,
@@ -39,20 +39,20 @@ impl CredentialCache {
         // Fast path: valid cache entry under read lock.
         {
             let guard = self.inner.read().await;
-            if let Some(entry) = &*guard {
-                if entry.fetched_at.elapsed() < self.ttl {
-                    return entry.credentials.clone();
-                }
+            if let Some(entry) = &*guard
+                && entry.fetched_at.elapsed() < self.ttl
+            {
+                return entry.credentials.clone();
             }
         }
 
         // Slow path: refresh under write lock.
         let mut guard = self.inner.write().await;
         // Double-check: another task may have refreshed while we waited.
-        if let Some(entry) = &*guard {
-            if entry.fetched_at.elapsed() < self.ttl {
-                return entry.credentials.clone();
-            }
+        if let Some(entry) = &*guard
+            && entry.fetched_at.elapsed() < self.ttl
+        {
+            return entry.credentials.clone();
         }
 
         let credentials = resolve_credentials(

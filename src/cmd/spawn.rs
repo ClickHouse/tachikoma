@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::Result;
 use crate::config::Config;
 use crate::provision::provision_vm;
 use crate::ssh::SshClient;
@@ -7,7 +8,6 @@ use crate::state::StateStore;
 use crate::tart::TartRunner;
 use crate::vm::{SpawnResult, VmOrchestrator};
 use crate::worktree::GitWorktree;
-use crate::Result;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -156,8 +156,8 @@ mod tests {
     use crate::config::PartialConfig;
     use crate::ssh::MockSshClient;
     use crate::state::{MockStateStore, State};
-    use crate::tart::types::TartVmInfo;
     use crate::tart::MockTartRunner;
+    use crate::tart::types::TartVmInfo;
     use crate::worktree::{MockGitWorktree, WorktreeInfo};
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;

@@ -3,13 +3,13 @@ pub mod profile;
 
 use std::net::IpAddr;
 
+use crate::Result;
 use crate::config::Config;
 use crate::ssh::SshClient;
 use crate::tart::TartRunner;
-use crate::Result;
 
 use base64::Engine;
-use credentials::{resolve_credentials, resolve_supplementary_credentials, CredentialSource};
+use credentials::{CredentialSource, resolve_credentials, resolve_supplementary_credentials};
 
 /// Encode a value as base64, suitable for safe shell injection via `echo <b64> | base64 -d`.
 fn b64(data: &str) -> String {
@@ -218,8 +218,7 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
     // verify that the corresponding directory exists in the mounted dotgit share.
     // We cannot use the branch name directly because git names the worktree entry after
     // the target directory (e.g. "myrepo-feature-x"), not the branch ("feature-x").
-    let git_dir_check =
-        "gitfile=$(cat /mnt/tachikoma/code/.git 2>/dev/null); \
+    let git_dir_check = "gitfile=$(cat /mnt/tachikoma/code/.git 2>/dev/null); \
          worktree_name=$(echo \"$gitfile\" | sed -n 's|.*worktrees/||p' | tr -d '\\r\\n'); \
          if [ -n \"$worktree_name\" ] && [ -d \"/mnt/tachikoma/dotgit/worktrees/$worktree_name\" ]; then \
            echo \"worktree:$worktree_name\"; \
@@ -430,16 +429,15 @@ async fn inject_host_claude_settings(tart: &dyn TartRunner, vm_name: &str, confi
             obj.remove("mcpServers");
         }
 
-        if let Some(perms) = obj.get_mut("permissions") {
-            if let Some(deny) = perms.get_mut("deny") {
-                if let Some(arr) = deny.as_array_mut() {
-                    arr.retain(|v| {
-                        v.as_str()
-                            .map(|s| !s.contains("~/Library/"))
-                            .unwrap_or(true)
-                    });
-                }
-            }
+        if let Some(perms) = obj.get_mut("permissions")
+            && let Some(deny) = perms.get_mut("deny")
+            && let Some(arr) = deny.as_array_mut()
+        {
+            arr.retain(|v| {
+                v.as_str()
+                    .map(|s| !s.contains("~/Library/"))
+                    .unwrap_or(true)
+            });
         }
     }
 
@@ -675,13 +673,13 @@ async fn inject_credentials(
             tart_exec(
                 tart,
                 vm_name,
-                &format!("mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"),
+                &format!(
+                    "mkdir -p ~/.claude && echo {encoded} | base64 -d > ~/.claude/.credentials.json"
+                ),
             )
             .await
             .map_err(|e| {
-                crate::TachikomaError::Provision(format!(
-                    "Failed to inject credentials: {e}"
-                ))
+                crate::TachikomaError::Provision(format!("Failed to inject credentials: {e}"))
             })?;
         }
         CredentialSource::EnvVar(token) | CredentialSource::Command(token) => {
@@ -732,8 +730,8 @@ mod tests {
     use super::*;
     use crate::config::PartialConfig;
     use crate::ssh::MockSshClient;
-    use crate::tart::types::ExecOutput;
     use crate::tart::MockTartRunner;
+    use crate::tart::types::ExecOutput;
     use std::net::Ipv4Addr;
     use std::path::Path;
     use std::sync::Mutex;
@@ -783,7 +781,9 @@ mod tests {
         )
         .unwrap();
         // Point HOME at the temp dir so dirs::home_dir() and tachikoma_key_path() resolve here.
-        std::env::set_var("HOME", home.path());
+        unsafe {
+            std::env::set_var("HOME", home.path());
+        }
         (home, key_path, guard)
     }
 
@@ -1122,7 +1122,9 @@ mod tests {
         let claude_dir = tmp.path().join(".claude");
         std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("settings.json"), &settings_str).unwrap();
-        std::env::set_var("HOME", tmp.path());
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
 
         let config = Config::from_partial(PartialConfig {
             sync_mcp_servers: Some(false),

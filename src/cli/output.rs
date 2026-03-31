@@ -43,16 +43,16 @@ pub fn print_success(mode: OutputMode, message: &str, data: Option<serde_json::V
         }
         OutputMode::Human => {
             println!("{}", message);
-            if let Some(d) = data {
-                if let Some(obj) = d.as_object() {
-                    for (k, v) in obj {
-                        let val = match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Null => "-".to_string(),
-                            other => other.to_string(),
-                        };
-                        println!("  {}: {}", k, val);
-                    }
+            if let Some(d) = data
+                && let Some(obj) = d.as_object()
+            {
+                for (k, v) in obj {
+                    let val = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Null => "-".to_string(),
+                        other => other.to_string(),
+                    };
+                    println!("  {}: {}", k, val);
                 }
             }
         }

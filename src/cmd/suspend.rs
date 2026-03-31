@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::state::{StateStore, VmStatus};
 use crate::tart::TartRunner;
-use crate::Result;
 
 /// Suspend a VM. Currently always uses stop because tart suspend silently
 /// breaks Linux VMs (exits 0 but creates an unresumable state).
