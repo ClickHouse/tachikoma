@@ -41,7 +41,7 @@ tachikoma spawn
 
 # You're now SSH'd into an Ubuntu VM with:
 #   - Your repo at ~/code (writable virtiofs mount — Claude can edit files)
-#   - Git configured (GIT_DIR, GIT_WORK_TREE, safe.directory)
+#   - Git configured (auto-discovers .git via symlink, safe.directory set)
 #   - Claude Code installed and authenticated
 #   - Hostname set to your branch slug (admin@feature-ui-button)
 ```
@@ -54,7 +54,7 @@ tachikoma spawn
 4. Mounts the worktree as `code` and `.git` as `dotgit` via virtiofs
 5. Mounts safe `~/.claude` subdirectories (rules, agents, plugins, skills, project memory)
 6. Generates a dedicated SSH key pair (`~/.ssh/tachikoma`) if needed
-7. Injects the SSH key, mounts virtiofs inside the guest, configures git env
+7. Injects the SSH key, mounts virtiofs inside the guest, creates symlink for git discovery
 8. Sets VM hostname to branch slug (e.g. `admin@feature-ui-button`)
 9. Resolves credentials (keychain, env vars, files, commands) and injects them via base64 encoding
 10. Installs Claude Code, skips onboarding wizard, and injects cleaned host `settings.json`
@@ -215,7 +215,7 @@ Only non-sensitive `~/.claude` subdirectories are mounted. Sensitive data (`hist
 
 **Note:** The `.git` directory is mounted writable — Claude has full git access inside the VM (commit, push, branch, worktree). `tachikoma pr` remains available as a convenience from the host.
 
-Git discovers `GIT_DIR` automatically from the `.git` file in the code mount (rewritten during provisioning to point at the VM-local dotgit path). No global `GIT_DIR` or `GIT_WORK_TREE` exports — this keeps `git clone` working for unrelated repos (e.g. Claude Code plugins).
+Git discovers `GIT_DIR` automatically from the `.git` file in the code mount. During provisioning, a symlink is created at the host-format path so git follows it to the VM-local dotgit mount. The `.git` file itself is never modified (that would corrupt the host copy). No global `GIT_DIR` or `GIT_WORK_TREE` exports, so `git clone` works fine for unrelated repos (e.g. Claude Code plugins).
 
 Environment (set in `~/.profile`):
 ```bash
@@ -257,7 +257,7 @@ src/
   ssh/        SSH trait (check, run, interactive), tachikoma key management
   state/      JSON state file with fd-lock advisory locking
   tart/       TartRunner trait, VM types, dir mounts
-  vm/         Zero-arg state machine orchestrator, boot detection with backoff
+  vm/         Zero-arg state machine orchestrator, boot detection via tart ip --wait
   worktree/   GitWorktree trait, branch detection, worktree management
 ```
 
@@ -284,13 +284,10 @@ Releases are built and published via GitHub Actions for both Apple Silicon and I
 
 **Steps:**
 
-1. Bump `version` in `Cargo.toml` on a feature branch:
-   ```toml
-   version = "0.2.2"
-   ```
+1. Bump `version` in `Cargo.toml` and run `cargo update --workspace` to sync `Cargo.lock`.
 2. Open a PR, get it merged to `main`.
-3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.2`).
-4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.4`, and publishes a GitHub Release with the binaries attached.
+3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.4`).
+4. The workflow validates the version, builds both architectures, creates the git tag, and publishes a GitHub Release with the binaries attached.
 
 The released binaries are stripped and statically linked — no Rust toolchain needed to run them.
 
