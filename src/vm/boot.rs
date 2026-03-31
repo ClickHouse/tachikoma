@@ -51,13 +51,17 @@ pub async fn wait_for_boot(
 async fn poll_for_ip(
     tart: &dyn TartRunner,
     vm_name: &str,
-    config: &BootConfig,
+    _config: &BootConfig,
     deadline: tokio::time::Instant,
 ) -> Result<IpAddr> {
-    let mut delay = config.initial_delay;
+    // Use tart's built-in --wait flag to let it handle DHCP polling internally.
+    // We still loop with shorter wait intervals so we can respect our own deadline
+    // and give the user a meaningful timeout error.
+    let wait_chunk = 10u64; // let tart poll for 10s per attempt
 
     loop {
-        if tokio::time::Instant::now() >= deadline {
+        let remaining = deadline.duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
             return Err(crate::TachikomaError::Vm(format!(
                 "Timed out waiting for VM '{vm_name}' to get an IP address.\n\
                  The VM is running but DHCP didn't assign an IP in time.\n\
@@ -69,9 +73,9 @@ async fn poll_for_ip(
             )));
         }
 
-        tokio::time::sleep(delay).await;
+        let wait = wait_chunk.min(remaining.as_secs().max(1));
 
-        match tart.ip(vm_name).await {
+        match tart.ip_wait(vm_name, wait).await {
             Ok(Some(ip)) => {
                 tracing::debug!("VM '{vm_name}' acquired IP: {ip}");
                 return Ok(ip);
@@ -83,9 +87,6 @@ async fn poll_for_ip(
                 tracing::trace!("Error polling IP for '{vm_name}': {e}");
             }
         }
-
-        delay = Duration::from_secs_f64(delay.as_secs_f64() * config.backoff_factor)
-            .min(config.max_interval);
     }
 }
 
@@ -137,13 +138,14 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        mock_tart
+            .expect_ip_wait()
+            .returning(move |_, _| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let config = BootConfig {
-            initial_delay: Duration::from_millis(10),
             timeout: Duration::from_secs(5),
             ..Default::default()
         };
@@ -159,7 +161,7 @@ mod tests {
         let call_count = AtomicU32::new(0);
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(move |_| {
+        mock_tart.expect_ip_wait().returning(move |_, _| {
             let count = call_count.fetch_add(1, Ordering::SeqCst);
             if count < 2 {
                 Ok(None)
@@ -172,8 +174,6 @@ mod tests {
         mock_ssh.expect_check_port_open().returning(|_| Ok(true));
 
         let config = BootConfig {
-            initial_delay: Duration::from_millis(10),
-            max_interval: Duration::from_millis(20),
             timeout: Duration::from_secs(5),
             ..Default::default()
         };
@@ -188,7 +188,9 @@ mod tests {
         let ssh_count = AtomicU32::new(0);
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        mock_tart
+            .expect_ip_wait()
+            .returning(move |_, _| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh.expect_check_port_open().returning(move |_| {
@@ -210,14 +212,12 @@ mod tests {
     #[tokio::test]
     async fn test_ip_timeout() {
         let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(|_| Ok(None));
+        mock_tart.expect_ip_wait().returning(|_, _| Ok(None));
 
         let mock_ssh = MockSshClient::new();
 
         let config = BootConfig {
-            initial_delay: Duration::from_millis(10),
-            max_interval: Duration::from_millis(20),
-            timeout: Duration::from_millis(100),
+            timeout: Duration::from_secs(1),
             ..Default::default()
         };
 
@@ -239,7 +239,9 @@ mod tests {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
 
         let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        mock_tart
+            .expect_ip_wait()
+            .returning(move |_, _| Ok(Some(ip)));
 
         let mut mock_ssh = MockSshClient::new();
         mock_ssh.expect_check_port_open().returning(|_| Ok(false));
@@ -257,45 +259,6 @@ mod tests {
         assert!(
             err.contains("Timed out"),
             "Expected timeout error, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_backoff_increases() {
-        // Verify that delays increase by checking total elapsed time is reasonable
-        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 64, 10));
-        let ip_count = AtomicU32::new(0);
-
-        let mut mock_tart = MockTartRunner::new();
-        mock_tart.expect_ip().returning(move |_| {
-            let count = ip_count.fetch_add(1, Ordering::SeqCst);
-            if count < 4 {
-                Ok(None)
-            } else {
-                Ok(Some(ip))
-            }
-        });
-
-        let mut mock_ssh = MockSshClient::new();
-        mock_ssh.expect_check_port_open().returning(|_| Ok(true));
-
-        let config = BootConfig {
-            initial_delay: Duration::from_millis(10),
-            max_interval: Duration::from_millis(100),
-            backoff_factor: 2.0,
-            timeout: Duration::from_secs(5),
-            ssh_user: "admin".to_string(),
-        };
-
-        let start = tokio::time::Instant::now();
-        let result = wait_for_boot(&mock_tart, &mock_ssh, "test-vm", &config).await;
-        let elapsed = start.elapsed();
-
-        assert!(result.is_ok());
-        // With backoff: 10 + 20 + 40 + 80 = 150ms minimum
-        assert!(
-            elapsed >= Duration::from_millis(100),
-            "Expected backoff delays, elapsed: {elapsed:?}"
         );
     }
 }

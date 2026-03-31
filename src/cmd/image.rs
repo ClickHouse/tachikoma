@@ -150,7 +150,7 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
         tart.expect_exec().returning(|_, _| {
             Ok(ExecOutput {
                 stdout: String::new(),
@@ -211,7 +211,7 @@ mod tests {
         });
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
         tart.expect_exec().returning(|_, _| {
             Ok(ExecOutput {
                 stdout: String::new(),

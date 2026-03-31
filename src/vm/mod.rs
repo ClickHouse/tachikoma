@@ -449,7 +449,7 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -485,7 +485,7 @@ mod tests {
         tart.expect_list()
             .returning(move || Ok(vec![suspended_vm(&vn)]));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -521,7 +521,7 @@ mod tests {
         tart.expect_list()
             .returning(move || Ok(vec![stopped_vm(&vn)]));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -588,7 +588,7 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -623,8 +623,8 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        // tart ip never returns an IP — simulates DHCP failure
-        tart.expect_ip().returning(|_| Ok(None));
+        // tart ip_wait never returns an IP — simulates DHCP failure
+        tart.expect_ip_wait().returning(|_, _| Ok(None));
         // Expect stop to be called — this is the ghost cleanup
         tart.expect_stop().returning(|_| Ok(()));
 
