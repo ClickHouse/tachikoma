@@ -296,4 +296,4 @@ The released binaries are stripped and statically linked — no Rust toolchain n
 
 ## License
 
-MIT
+Apache License 2.0. See [LICENSE](LICENSE) for details.
