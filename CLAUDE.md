@@ -16,7 +16,7 @@ cargo run -- doctor     # verify prerequisites (tart, git, ssh)
 
 ## Architecture
 
-Tachikoma is a Rust CLI + MCP server (~6,500 lines, 38 files, edition 2021) that spawns isolated Linux VMs per git branch on Apple Silicon via [Tart](https://tart.run). VM names are deterministic: `tachikoma-<repo>-<branch-slug>`.
+Tachikoma is a Rust CLI + MCP server (~6,500 lines, 38 files, edition 2024) that spawns isolated Linux VMs per git branch on Apple Silicon via [Tart](https://tart.run). VM names are deterministic: `tachikoma-<repo>-<branch-slug>`.
 
 ### Module Layout
 
@@ -25,7 +25,7 @@ src/
   lib.rs          TachikomaError, vm_name()
   cli/            Clap arg parsing, output formatting (human/json/verbose)
   cmd/            Thin command wiring (spawn, halt, destroy, pr, list, proxy, ...)
-  vm/             VmOrchestrator state machine + two-phase boot detection
+  vm/             VmOrchestrator state machine + boot detection via tart ip --wait
   provision/      SSH key gen, virtiofs mount, credential waterfall, Claude install
   proxy/          Credential proxy server (hyper HTTP + TTL cache)
   tart/           TartRunner trait + RealTartRunner (wraps tart CLI)
@@ -51,9 +51,9 @@ All external interactions are behind `#[async_trait]` traits with `#[cfg_attr(te
 
 ### Core Spawn Flow
 
-`cmd/spawn::run()` → (if `credential_proxy=true`) `ensure_proxy_running()` → `ensure_worktree()` → `VmOrchestrator::spawn()` (state machine: Not Found → clone+run; Stopped → run; Suspended → run; Running → reconnect) → `wait_for_boot()` (two-phase: poll `tart ip`, then TCP :22) → `provision_vm()` (only on `SpawnResult::Created`) → `ssh.connect_interactive()` (exec replaces process).
+`cmd/spawn::run()` → (if `credential_proxy=true`) `ensure_proxy_running()` → `ensure_worktree()` → `VmOrchestrator::spawn()` (state machine: Not Found → clone+run; Stopped → run; Suspended → run; Running → reconnect) → `wait_for_boot()` (two-phase: `tart ip --wait` for DHCP, then TCP :22; stops ghost VM on timeout) → `provision_vm()` (only on `SpawnResult::Created`) → `ssh.connect_interactive()` (exec replaces process).
 
-Provisioning steps (in order): inject SSH key → virtiofs mounts → rewrite `.git` file to VM-local dotgit path → set hostname to branch slug → resolve + inject credentials (or `ANTHROPIC_BASE_URL` when `credential_proxy=true`) → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
+Provisioning steps (in order): inject SSH key → virtiofs mounts → create symlink at host-format `.git` path → VM-local dotgit (`.git` file is never modified) → set hostname to branch slug → resolve + inject credentials (or `ANTHROPIC_BASE_URL` when `credential_proxy=true`) → install Claude Code → patch `~/.claude.json` → symlink configured `~/.claude` subdirs → inject stripped `settings.json` + MCP env vars → run provisioning scripts.
 
 ### Credential Proxy
 
