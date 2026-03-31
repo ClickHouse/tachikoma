@@ -19,6 +19,7 @@ pub trait TartRunner: Send + Sync {
     async fn suspend(&self, name: &str) -> Result<()>;
     async fn delete(&self, name: &str) -> Result<()>;
     async fn ip(&self, name: &str) -> Result<Option<IpAddr>>;
+    async fn ip_wait(&self, name: &str, wait_secs: u64) -> Result<Option<IpAddr>>;
     async fn exec(&self, name: &str, cmd: Vec<String>) -> Result<ExecOutput>;
 }
 
@@ -172,6 +173,21 @@ impl TartRunner for RealTartRunner {
     async fn ip(&self, name: &str) -> Result<Option<IpAddr>> {
         let output = Self::tart_cmd()
             .args(["ip", name])
+            .output()
+            .await
+            .map_err(|e| crate::TachikomaError::Tart(format!("Failed to run tart ip: {e}")))?;
+
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let ip_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(ip_str.parse::<IpAddr>().ok())
+    }
+
+    async fn ip_wait(&self, name: &str, wait_secs: u64) -> Result<Option<IpAddr>> {
+        let output = Self::tart_cmd()
+            .args(["ip", "--wait", &wait_secs.to_string(), name])
             .output()
             .await
             .map_err(|e| crate::TachikomaError::Tart(format!("Failed to run tart ip: {e}")))?;

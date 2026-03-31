@@ -218,7 +218,16 @@ impl<'a> VmOrchestrator<'a> {
                 on_status("Starting VM...");
                 self.tart.run(&vm_name, &opts).await?;
                 on_status("Waiting for boot...");
-                let ip = self.wait_boot(&vm_name).await?;
+                let ip = match self.wait_boot(&vm_name).await {
+                    Ok(ip) => ip,
+                    Err(e) => {
+                        // Don't leave a ghost VM running — stop it so the user
+                        // doesn't have to manually clean up with tart stop/delete.
+                        tracing::warn!("Boot failed, stopping ghost VM '{vm_name}'");
+                        let _ = self.tart.stop(&vm_name).await;
+                        return Err(e);
+                    }
+                };
                 self.update_state(
                     &vm_name,
                     repo_name,
@@ -440,7 +449,7 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -476,7 +485,7 @@ mod tests {
         tart.expect_list()
             .returning(move || Ok(vec![suspended_vm(&vn)]));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -512,7 +521,7 @@ mod tests {
         tart.expect_list()
             .returning(move || Ok(vec![stopped_vm(&vn)]));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -579,7 +588,7 @@ mod tests {
         tart.expect_list().returning(|| Ok(vec![]));
         tart.expect_clone_vm().returning(|_, _| Ok(()));
         tart.expect_run().returning(|_, _| Ok(()));
-        tart.expect_ip().returning(move |_| Ok(Some(ip)));
+        tart.expect_ip_wait().returning(move |_, _| Ok(Some(ip)));
 
         let mut ssh = MockSshClient::new();
         ssh.expect_check_port_open().returning(|_| Ok(true));
@@ -606,6 +615,42 @@ mod tests {
             )
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_create_stops_ghost_vm_on_boot_failure() {
+        let mut tart = MockTartRunner::new();
+        tart.expect_list().returning(|| Ok(vec![]));
+        tart.expect_clone_vm().returning(|_, _| Ok(()));
+        tart.expect_run().returning(|_, _| Ok(()));
+        // tart ip_wait never returns an IP — simulates DHCP failure
+        tart.expect_ip_wait().returning(|_, _| Ok(None));
+        // Expect stop to be called — this is the ghost cleanup
+        tart.expect_stop().returning(|_| Ok(()));
+
+        let mock_ssh = MockSshClient::new();
+        let git = MockGitWorktree::new();
+        let state_store = MockStateStore::new();
+
+        let mut config = test_config();
+        config.boot_timeout_secs = 1; // fail fast
+
+        let orch = VmOrchestrator::new(&tart, &mock_ssh, &git, &state_store, &config);
+
+        let result = orch
+            .spawn(
+                "main",
+                "myrepo",
+                Path::new("/tmp/wt"),
+                Path::new("/tmp/repo"),
+                &|_| {},
+            )
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Timed out"), "should timeout, got: {err}");
+        // mockall verifies tart.stop() was called — panics on drop if not
     }
 
     #[test]
