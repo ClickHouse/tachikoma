@@ -10,11 +10,11 @@ Download the latest pre-built binary using the [gh CLI](https://cli.github.com) 
 
 ```bash
 # Apple Silicon (M1/M2/M3)
-gh release download v0.2.3 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
+gh release download v0.2.4 --repo ClickHouse/tachikoma --pattern tachikoma-macos-arm64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 
 # Intel Mac
-gh release download v0.2.3 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
+gh release download v0.2.4 --repo ClickHouse/tachikoma --pattern tachikoma-macos-x86_64 \
   --output /tmp/tachikoma && sudo mv /tmp/tachikoma /usr/local/bin/tachikoma && sudo chmod +x /usr/local/bin/tachikoma
 ```
 
@@ -290,7 +290,7 @@ Releases are built and published via GitHub Actions for both Apple Silicon and I
    ```
 2. Open a PR, get it merged to `main`.
 3. Go to **Actions → Release → Run workflow**, enter the version (e.g. `0.2.2`).
-4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.3`, and publishes a GitHub Release with the binaries attached.
+4. The workflow validates the version, builds both architectures, creates the git tag `v0.2.4`, and publishes a GitHub Release with the binaries attached.
 
 The released binaries are stripped and statically linked — no Rust toolchain needed to run them.
 

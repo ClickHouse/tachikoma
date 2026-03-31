@@ -48,17 +48,17 @@ pub async fn resolve_credentials(
     }
 
     // 2. CLAUDE_CODE_OAUTH_TOKEN env var
-    if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN") {
-        if !token.is_empty() {
-            return CredentialSource::EnvVar(token);
-        }
+    if let Ok(token) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN")
+        && !token.is_empty()
+    {
+        return CredentialSource::EnvVar(token);
     }
 
     // 3. Configured credential command
-    if let Some(cmd) = credential_command {
-        if let Some(cred) = try_command(cmd).await {
-            return CredentialSource::Command(cred);
-        }
+    if let Some(cmd) = credential_command
+        && let Some(cred) = try_command(cmd).await
+    {
+        return CredentialSource::Command(cred);
     }
 
     // 4. ~/.claude/.credentials.json file
@@ -67,17 +67,17 @@ pub async fn resolve_credentials(
     }
 
     // 5. ANTHROPIC_API_KEY env var
-    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-        if !key.is_empty() {
-            return CredentialSource::ApiKey(key);
-        }
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY")
+        && !key.is_empty()
+    {
+        return CredentialSource::ApiKey(key);
     }
 
     // 6. Configured API key command
-    if let Some(cmd) = api_key_command {
-        if let Some(key) = try_command(cmd).await {
-            return CredentialSource::ApiKeyCommand(key);
-        }
+    if let Some(cmd) = api_key_command
+        && let Some(key) = try_command(cmd).await
+    {
+        return CredentialSource::ApiKeyCommand(key);
     }
 
     // 7. Bedrock/Vertex/Proxy env vars
@@ -147,36 +147,36 @@ fn try_proxy_env() -> Option<CredentialSource> {
     ];
 
     for (var, provider) in &proxy_vars {
-        if let Ok(val) = std::env::var(var) {
-            if !val.is_empty() {
-                let mut vars = vec![(var.to_string(), val)];
-                // Collect related env vars
-                match *provider {
-                    "bedrock" => {
-                        for key in ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] {
-                            if let Ok(v) = std::env::var(key) {
-                                vars.push((key.to_string(), v));
-                            }
+        if let Ok(val) = std::env::var(var)
+            && !val.is_empty()
+        {
+            let mut vars = vec![(var.to_string(), val)];
+            // Collect related env vars
+            match *provider {
+                "bedrock" => {
+                    for key in ["AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] {
+                        if let Ok(v) = std::env::var(key) {
+                            vars.push((key.to_string(), v));
                         }
                     }
-                    "vertex" => {
-                        for key in [
-                            "CLOUD_ML_REGION",
-                            "ANTHROPIC_VERTEX_PROJECT_ID",
-                            "GOOGLE_APPLICATION_CREDENTIALS",
-                        ] {
-                            if let Ok(v) = std::env::var(key) {
-                                vars.push((key.to_string(), v));
-                            }
-                        }
-                    }
-                    _ => {}
                 }
-                return Some(CredentialSource::ProxyEnv {
-                    provider: provider.to_string(),
-                    vars,
-                });
+                "vertex" => {
+                    for key in [
+                        "CLOUD_ML_REGION",
+                        "ANTHROPIC_VERTEX_PROJECT_ID",
+                        "GOOGLE_APPLICATION_CREDENTIALS",
+                    ] {
+                        if let Ok(v) = std::env::var(key) {
+                            vars.push((key.to_string(), v));
+                        }
+                    }
+                }
+                _ => {}
             }
+            return Some(CredentialSource::ProxyEnv {
+                provider: provider.to_string(),
+                vars,
+            });
         }
     }
     None
@@ -189,11 +189,21 @@ mod tests {
     #[tokio::test]
     async fn test_waterfall_with_no_credentials() {
         // Clear relevant env vars for this test
-        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
-        std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
-        std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
-        std::env::remove_var("ANTHROPIC_BASE_URL");
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        }
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
+        }
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_USE_VERTEX");
+        }
+        unsafe {
+            std::env::remove_var("ANTHROPIC_BASE_URL");
+        }
 
         let result = resolve_credentials(None, None).await;
         // May find keychain or credentials file, but with no env vars
@@ -207,9 +217,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_waterfall_env_var_priority() {
-        std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "test-oauth-token");
+        unsafe {
+            std::env::set_var("CLAUDE_CODE_OAUTH_TOKEN", "test-oauth-token");
+        }
         let result = resolve_credentials(None, None).await;
-        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        }
 
         // Should find the env var (unless keychain succeeds first)
         assert!(
@@ -223,10 +237,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_waterfall_api_key() {
-        std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
-        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-key");
+        unsafe {
+            std::env::remove_var("CLAUDE_CODE_OAUTH_TOKEN");
+        }
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-test-key");
+        }
         let result = resolve_credentials(None, None).await;
-        std::env::remove_var("ANTHROPIC_API_KEY");
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
 
         assert!(
             matches!(

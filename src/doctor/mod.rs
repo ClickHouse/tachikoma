@@ -1,5 +1,5 @@
-use crate::cli::output::OutputMode;
 use crate::Result;
+use crate::cli::output::OutputMode;
 
 #[derive(Debug)]
 pub struct CheckResult {

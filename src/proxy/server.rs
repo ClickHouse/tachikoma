@@ -6,7 +6,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_tls::HttpsConnector;
-use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
 
 use super::credentials::CredentialCache;

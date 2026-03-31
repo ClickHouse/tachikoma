@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
+use crate::Result;
 use crate::config::Config;
 use crate::ssh::SshClient;
 use crate::state::{StateStore, VmEntry, VmStatus};
 use crate::tart::{DirMount, RunOpts, TartRunner, TartVmState};
 use crate::worktree::GitWorktree;
-use crate::Result;
 
-use boot::{wait_for_boot, BootConfig};
+use boot::{BootConfig, wait_for_boot};
 
 /// Result of the spawn/connect orchestration
 #[derive(Debug)]
@@ -300,15 +300,14 @@ impl<'a> VmOrchestrator<'a> {
 
     async fn get_ip_or_wait(&self, vm_name: &str) -> Result<IpAddr> {
         // Try getting IP directly first
-        if let Ok(Some(ip)) = self.tart.ip(vm_name).await {
-            if self
+        if let Ok(Some(ip)) = self.tart.ip(vm_name).await
+            && self
                 .ssh
                 .check_connection(ip, &self.config.ssh_user)
                 .await
                 .unwrap_or(false)
-            {
-                return Ok(ip);
-            }
+        {
+            return Ok(ip);
         }
         self.wait_boot(vm_name).await
     }
@@ -365,8 +364,8 @@ mod tests {
     use crate::config::PartialConfig;
     use crate::ssh::MockSshClient;
     use crate::state::{MockStateStore, State};
-    use crate::tart::types::TartVmInfo;
     use crate::tart::MockTartRunner;
+    use crate::tart::types::TartVmInfo;
     use crate::worktree::MockGitWorktree;
     use std::net::Ipv4Addr;
 

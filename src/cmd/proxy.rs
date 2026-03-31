@@ -1,6 +1,6 @@
 use crate::cli::ProxyAction;
 use crate::config::Config;
-use crate::proxy::{is_proxy_reachable, ProxyConfig};
+use crate::proxy::{ProxyConfig, is_proxy_reachable};
 
 /// Path to the proxy PID file.
 fn pid_path() -> Option<std::path::PathBuf> {

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::state::StateStore;
 use crate::Result;
+use crate::state::StateStore;
 
 const MARKER_BEGIN: &str = "# BEGIN tachikoma managed";
 const MARKER_END: &str = "# END tachikoma managed";

@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "tachikoma"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "assert_cmd",
  "async-trait",

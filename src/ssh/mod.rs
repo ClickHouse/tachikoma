@@ -37,11 +37,11 @@ impl RealSshClient {
             "-o".to_string(),
             "LogLevel=ERROR".to_string(),
         ];
-        if let Some(key_path) = tachikoma_key_path() {
-            if key_path.exists() {
-                opts.push("-i".to_string());
-                opts.push(key_path.display().to_string());
-            }
+        if let Some(key_path) = tachikoma_key_path()
+            && key_path.exists()
+        {
+            opts.push("-i".to_string());
+            opts.push(key_path.display().to_string());
         }
         opts
     }

@@ -1,8 +1,8 @@
 use chrono::Utc;
 
+use crate::Result;
 use crate::state::StateStore;
 use crate::tart::TartRunner;
-use crate::Result;
 
 pub struct PruneResult {
     pub pruned: Vec<String>,
