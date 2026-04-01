@@ -231,7 +231,7 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
         .unwrap_or_else(|_| "main".to_string());
 
     // For linked worktrees: the code mount contains a .git FILE with content:
-    //   gitdir: /Users/sak/Clickhouse/repo/.git/worktrees/<name>
+    //   gitdir: /Users/dev/myrepo/.git/worktrees/<name>
     // That host path does not exist inside the VM. Instead of rewriting the shared .git
     // file (which would corrupt the host copy — issue #24), create a symlink inside the VM
     // at that exact host path, pointing to the VM-local dotgit worktree directory.
