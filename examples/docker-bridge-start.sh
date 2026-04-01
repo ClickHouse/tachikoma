@@ -9,7 +9,7 @@
 #
 # Requires: socat (brew install socat)
 #
-# ⚠️  SECURITY WARNING:
+# SECURITY WARNING:
 #   This exposes the Docker daemon on 192.168.64.1:2375 (no TLS).
 #   Bind address is the Tart vmnet bridge — only VMs on that subnet can reach it.
 #   Do NOT change to 0.0.0.0 unless you understand the implications.

@@ -6,11 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release — must already match Cargo.toml (e.g. 0.2.0, no v prefix)"
+        description: "Version to release — must already match Cargo.toml (e.g. 0.2.4, no v prefix)"
         required: true
+
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_HOME: /Users/runner/.cargo
+  CARGO_INCREMENTAL: 0
+  CACHE_ON_FAILURE: false
 
 jobs:
   # ── 1. Sanity-check: Cargo.toml version must match the input ────────────────
@@ -18,17 +23,19 @@ jobs:
     name: Validate version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Version matches Cargo.toml
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           cargo_version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ "$cargo_version" != "${{ github.event.inputs.version }}" ]; then
-            echo "❌ Cargo.toml version ($cargo_version) ≠ input (${{ github.event.inputs.version }})"
+          if [ "$cargo_version" != "$INPUT_VERSION" ]; then
+            echo "Cargo.toml version ($cargo_version) does not match input ($INPUT_VERSION)"
             echo "Bump version in Cargo.toml on main first, then re-run this workflow."
             exit 1
           fi
-          echo "✅ Version $cargo_version confirmed"
+          echo "Version $cargo_version confirmed"
 
   # ── 2. Build macOS binaries (both architectures) ────────────────────────────
   build:
@@ -38,23 +45,23 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest   # Apple Silicon (M1/M2/M3) — native
+          - os: macos-latest
             target: aarch64-apple-darwin
             artifact: tachikoma-macos-arm64
-          - os: macos-latest   # Intel — cross-compiled from arm64 runner
+          - os: macos-latest
             target: x86_64-apple-darwin
             artifact: tachikoma-macos-x86_64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           key: release-${{ matrix.target }}
 
@@ -67,7 +74,7 @@ jobs:
           cp target/${{ matrix.target }}/release/tachikoma ${{ matrix.artifact }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -81,20 +88,22 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Create and push git tag
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ github.event.inputs.version }}"
-          git push origin "v${{ github.event.inputs.version }}"
+          git tag "v${INPUT_VERSION}"
+          git push origin "v${INPUT_VERSION}"
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: Tachikoma v${{ github.event.inputs.version }}
