@@ -93,7 +93,7 @@ pub fn branch_slug(branch: &str) -> String {
 
 /// Convert a filesystem path to a flat slug suitable for directory names.
 /// Replaces `/` with `-` and collapses leading separators.
-/// Used for Claude project slugs: `/Users/rahul/proj` → `-Users-rahul-proj`.
+/// Used for Claude project slugs: `/home/user/myproject` → `-home-user-myproject`.
 pub fn path_slug(path: &std::path::Path) -> String {
     path.to_string_lossy().replace('/', "-")
 }
