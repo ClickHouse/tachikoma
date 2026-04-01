@@ -23,7 +23,7 @@
 # │                      │          │ Docker Desktop / OrbStack    │
 # └──────────────────────┘          └──────────────────────────────┘
 #
-# ⚠️  SECURITY WARNING:
+# SECURITY WARNING:
 #   Docker socket access grants effective root on the host machine.
 #   Any process in the VM can:
 #     - Mount host filesystems (docker run -v /:/host)
