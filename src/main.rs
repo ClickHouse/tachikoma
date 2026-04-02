@@ -113,7 +113,10 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
             }
         }
 
-        Some(Command::Spawn { branch }) => {
+        Some(Command::Spawn {
+            branch,
+            no_interactive,
+        }) => {
             let spinner = make_spinner(mode);
             let result = tachikoma::cmd::spawn::run(
                 branch.as_deref(),
@@ -123,7 +126,7 @@ async fn run(cli: Cli, mode: OutputMode) -> tachikoma::Result<()> {
                 &git,
                 &state_store,
                 &config,
-                true,
+                !no_interactive,
                 &|msg: &str| spinner.set_message(msg.to_owned()),
             )
             .await;
