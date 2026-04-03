@@ -31,6 +31,9 @@ pub enum Command {
     Spawn {
         /// Branch name (defaults to current branch)
         branch: Option<String>,
+        /// Don't SSH into the VM after spawning (eg, for CI/automation)
+        #[arg(long)]
+        no_interactive: bool,
     },
     /// SSH into a running VM
     Enter {
@@ -197,7 +200,9 @@ mod tests {
     #[test]
     fn test_spawn_command() {
         let cli = Cli::try_parse_from(["tachikoma", "spawn", "main"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Spawn { branch: Some(ref b) }) if b == "main"));
+        assert!(
+            matches!(cli.command, Some(Command::Spawn { branch: Some(ref b), .. }) if b == "main")
+        );
     }
 
     #[test]
