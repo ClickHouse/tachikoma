@@ -99,8 +99,6 @@ impl TartRunner for RealTartRunner {
         let mut cmd = std::process::Command::new("tart");
         cmd.args(&args_ref);
         cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
 
         // SAFETY: setsid() is async-signal-safe and appropriate in pre_exec.
         // We detach so tart run outlives the CLI process.
