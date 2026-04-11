@@ -14,6 +14,9 @@ pub async fn run(vm_name: &str, tart: &dyn TartRunner, state_store: &dyn StateSt
     state.remove_vm(vm_name);
     state_store.save(&state).await?;
 
+    // Clean up tart run log
+    let _ = std::fs::remove_file(crate::tart::log_path(vm_name));
+
     Ok(())
 }
 

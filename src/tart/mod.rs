@@ -5,9 +5,17 @@ pub use types::{DirMount, ExecOutput, RunOpts, TartVmInfo, TartVmState};
 use async_trait::async_trait;
 use std::net::IpAddr;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use crate::Result;
+
+/// Returns the path to the tart run stderr log for a given VM.
+pub fn log_path(vm_name: &str) -> PathBuf {
+    crate::state::FileStateStore::default_path()
+        .join("logs")
+        .join(format!("tart-run-{vm_name}.log"))
+}
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -100,7 +108,15 @@ impl TartRunner for RealTartRunner {
         cmd.args(&args_ref);
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
+
+        let log = log_path(name);
+        if let Some(parent) = log.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        match std::fs::File::create(&log) {
+            Ok(f) => cmd.stderr(Stdio::from(f)),
+            Err(_) => cmd.stderr(Stdio::null()),
+        };
 
         // SAFETY: setsid() is async-signal-safe and appropriate in pre_exec.
         // We detach so tart run outlives the CLI process.

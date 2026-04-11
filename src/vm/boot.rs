@@ -69,7 +69,9 @@ async fn poll_for_ip(
                    tart ip --resolver arp {vm_name}\n  \
                    tart ip --wait 30 {vm_name}\n  \
                    sudo launchctl kickstart -k system/com.apple.bootpd  # restart DHCP\n\
-                 If the VM is stuck, clean it up with: tachikoma destroy {vm_name}"
+                 Check tart logs: {}\n\
+                 If the VM is stuck, clean it up with: tachikoma destroy {vm_name}",
+                crate::tart::log_path(vm_name).display()
             )));
         }
 
