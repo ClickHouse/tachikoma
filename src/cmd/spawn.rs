@@ -28,12 +28,6 @@ pub async fn run(
     let branch = orch.resolve_branch(branch, cwd).await?;
     let (repo_name, repo_root) = orch.resolve_repo(cwd).await?;
 
-    // Ensure the credential proxy is running before provisioning if enabled
-    if config.credential_proxy {
-        on_status("Ensuring credential proxy is running...");
-        ensure_proxy_running(config).await?;
-    }
-
     // Ensure worktree exists
     on_status("Preparing worktree...");
     let worktree_path = orch
@@ -45,6 +39,14 @@ pub async fn run(
     let result = orch
         .spawn(&branch, &repo_name, &worktree_path, &repo_root, on_status)
         .await?;
+
+    // Start the credential proxy after the VM is up (the bridge interface
+    // only exists once tart has a running VM) but before provisioning
+    // (which needs the proxy for internet access in the VM).
+    if config.credential_proxy {
+        on_status("Ensuring credential proxy is running...");
+        ensure_proxy_running(config).await?;
+    }
 
     // Provision if newly created
     if matches!(result, SpawnResult::Created { .. }) {

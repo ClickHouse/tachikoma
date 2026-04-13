@@ -8,6 +8,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::{Client, connect::HttpConnector};
 use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::TokioIo;
 
 use super::credentials::CredentialCache;
 use crate::provision::credentials::CredentialSource;
@@ -22,6 +23,12 @@ pub fn build_client() -> HttpsClient {
 
 fn static_body(s: &'static str) -> BoxBody {
     Full::new(Bytes::from(s))
+        .map_err(|e: Infallible| match e {})
+        .boxed()
+}
+
+fn empty_body() -> BoxBody {
+    Full::new(Bytes::new())
         .map_err(|e: Infallible| match e {})
         .boxed()
 }
@@ -54,14 +61,58 @@ fn extract_file_token(json: &str) -> Option<String> {
 
 /// Main request handler for the credential proxy.
 ///
+/// - `CONNECT host:port` → TCP tunnel (for HTTPS through proxy)
 /// - `GET /health` → 200 JSON status
 /// - `* /v1/*` → forwarded to `api.anthropic.com` with fresh credentials
+/// - `* http://...` → general-purpose forward HTTP proxy
 /// - everything else → 403
 pub async fn handle_request(
     req: Request<Incoming>,
     cache: Arc<CredentialCache>,
     client: Arc<HttpsClient>,
 ) -> Result<Response<BoxBody>, Infallible> {
+    // HTTP CONNECT — used by HTTPS clients (curl, apt, npm) going through the proxy.
+    // We establish a TCP connection to the target, send back 200, then upgrade the
+    // connection to bidirectionally copy bytes (transparent tunnel).
+    if req.method() == Method::CONNECT {
+        let authority = req
+            .uri()
+            .authority()
+            .map(|a| a.as_str().to_string())
+            .unwrap_or_default();
+
+        tracing::debug!("CONNECT tunnel to {authority}");
+
+        // Pre-connect to the target before responding 200
+        let upstream = match tokio::net::TcpStream::connect(&authority).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("CONNECT tunnel to {authority} failed: {e}");
+                return Ok(error_response(
+                    StatusCode::BAD_GATEWAY,
+                    "Tunnel connect failed",
+                ));
+            }
+        };
+
+        // Spawn the tunnel task — it runs after hyper upgrades the connection
+        tokio::spawn(async move {
+            match hyper::upgrade::on(req).await {
+                Ok(upgraded) => {
+                    let mut client_io = TokioIo::new(upgraded);
+                    let mut upstream_io = upstream;
+                    let _ = tokio::io::copy_bidirectional(&mut client_io, &mut upstream_io).await;
+                }
+                Err(e) => tracing::warn!("CONNECT upgrade failed: {e}"),
+            }
+        });
+
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .body(empty_body())
+            .unwrap());
+    }
+
     let path = req.uri().path();
 
     // Health check endpoint (no auth required)
@@ -73,13 +124,29 @@ pub async fn handle_request(
             .unwrap());
     }
 
-    // Only forward /v1/* — reject everything else, including traversal attempts
+    // Absolute-form URI (e.g. http://example.com/path) → general forward proxy
+    if req.uri().scheme().is_some() && !path.starts_with("/v1/") {
+        return forward_general(req, &client).await;
+    }
+
+    // /v1/* → Anthropic credential proxy (original behavior)
     if !path.starts_with("/v1/") || path.contains("..") {
         return Ok(error_response(
             StatusCode::FORBIDDEN,
             "Only /v1/* paths are forwarded by this proxy",
         ));
     }
+
+    forward_anthropic(req, &cache, &client).await
+}
+
+/// Forward a request to api.anthropic.com with injected credentials.
+async fn forward_anthropic(
+    req: Request<Incoming>,
+    cache: &CredentialCache,
+    client: &HttpsClient,
+) -> Result<Response<BoxBody>, Infallible> {
+    let path = req.uri().path().to_string();
 
     // Resolve fresh credentials from the cache
     let creds = cache.get().await;
@@ -96,7 +163,7 @@ pub async fn handle_request(
         .uri()
         .path_and_query()
         .map(|pq| pq.as_str())
-        .unwrap_or(path);
+        .unwrap_or(&path);
     let upstream_url = format!("https://api.anthropic.com{path_and_query}");
 
     // Consume and buffer the incoming request body (10 MB limit)
@@ -193,6 +260,64 @@ pub async fn handle_request(
             Ok(error_response(
                 StatusCode::BAD_GATEWAY,
                 "Upstream request to api.anthropic.com failed",
+            ))
+        }
+    }
+}
+
+/// General-purpose HTTP forward proxy for absolute-form requests
+/// (e.g. `GET http://example.com/path`). Used by VM tools like curl, apt, npm.
+async fn forward_general(
+    req: Request<Incoming>,
+    client: &HttpsClient,
+) -> Result<Response<BoxBody>, Infallible> {
+    let uri = req.uri().clone();
+    tracing::debug!("Forward proxy: {} {}", req.method(), uri);
+
+    const MAX_BODY_BYTES: usize = 50 * 1024 * 1024;
+    let (parts, body) = req.into_parts();
+    let body_bytes = match http_body_util::Limited::new(body, MAX_BODY_BYTES)
+        .collect()
+        .await
+    {
+        Ok(collected) => collected.to_bytes(),
+        Err(_) => {
+            return Ok(error_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Request body exceeds 50 MB limit",
+            ));
+        }
+    };
+
+    let mut upstream_builder = Request::builder().method(parts.method).uri(uri);
+    for (name, value) in &parts.headers {
+        let lname = name.as_str();
+        if lname != "host" && lname != "proxy-connection" {
+            upstream_builder = upstream_builder.header(name, value);
+        }
+    }
+
+    let upstream_req = match upstream_builder.body(Full::new(body_bytes)) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Forward proxy: failed to build request: {e}");
+            return Ok(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to build upstream request",
+            ));
+        }
+    };
+
+    match client.request(upstream_req).await {
+        Ok(response) => {
+            let (resp_parts, resp_body) = response.into_parts();
+            Ok(Response::from_parts(resp_parts, resp_body.boxed()))
+        }
+        Err(e) => {
+            tracing::error!("Forward proxy: upstream request failed: {e}");
+            Ok(error_response(
+                StatusCode::BAD_GATEWAY,
+                "Upstream request failed",
             ))
         }
     }

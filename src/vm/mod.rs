@@ -100,15 +100,22 @@ impl<'a> VmOrchestrator<'a> {
     ) -> Result<PathBuf> {
         let worktrees = self.git.list_worktrees(repo_root).await?;
 
-        // Check if a linked worktree already exists for this branch.
-        // Skip the main worktree — reusing it breaks isolation (switching
-        // branches on the host would change what the VM sees).
+        // Check if a worktree already exists for this branch.
         for wt in &worktrees {
-            if wt.branch.as_deref() == Some(branch) && !wt.is_main {
-                tracing::debug!(
-                    "Found existing linked worktree for branch '{branch}' at {:?}",
-                    wt.path
-                );
+            if wt.branch.as_deref() == Some(branch) {
+                if wt.is_main {
+                    // The main worktree is already on this branch — use it directly.
+                    // No need to create a linked worktree for the branch we're already on.
+                    tracing::debug!(
+                        "Branch '{branch}' is the main worktree at {:?}, using directly",
+                        wt.path
+                    );
+                } else {
+                    tracing::debug!(
+                        "Found existing linked worktree for branch '{branch}' at {:?}",
+                        wt.path
+                    );
+                }
                 return Ok(wt.path.clone());
             }
         }
@@ -680,7 +687,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ensure_worktree_skips_main_worktree() {
+    async fn test_ensure_worktree_uses_main_worktree_directly() {
         use crate::worktree::WorktreeInfo;
 
         let tart = MockTartRunner::new();
@@ -699,12 +706,8 @@ mod tests {
             }])
         });
 
-        // Expect create_worktree to be called because main worktree should be skipped
-        git.expect_create_worktree()
-            .withf(|_repo, branch, target| {
-                branch == "main" && target.to_string_lossy().contains("myrepo-main")
-            })
-            .returning(|_, _, target| Ok(target.to_path_buf()));
+        // create_worktree should NOT be called — main worktree is used directly
+        // (mockall will panic if an unexpected call happens)
 
         let orch = VmOrchestrator::new(&tart, &ssh, &git, &state_store, &config);
         let result = orch
@@ -712,9 +715,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Should NOT be the main worktree path
-        assert_ne!(result, PathBuf::from("/tmp/repo"));
-        assert!(result.to_string_lossy().contains("myrepo-main"));
+        // Should return the main worktree path directly
+        assert_eq!(result, PathBuf::from("/tmp/repo"));
     }
 
     #[tokio::test]

@@ -6,8 +6,8 @@ pub async fn run(vm_name: &str, tart: &dyn TartRunner, state_store: &dyn StateSt
     // Stop first if running (ignore errors)
     let _ = tart.stop(vm_name).await;
 
-    // Delete the VM
-    tart.delete(vm_name).await?;
+    // Delete the VM (ignore "not found" — still clean up state)
+    let _ = tart.delete(vm_name).await;
 
     // Remove from state
     let mut state = state_store.load().await?;
@@ -54,6 +54,37 @@ mod tests {
             .returning(|_| Ok(()));
 
         let result = run("test-vm", &tart, &store).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_destroy_cleans_state_when_tart_vm_not_found() {
+        let mut tart = MockTartRunner::new();
+        tart.expect_stop()
+            .returning(|_| Err(crate::TachikomaError::Tart("VM not found".to_string())));
+        tart.expect_delete()
+            .returning(|_| Err(crate::TachikomaError::Tart("does not exist".to_string())));
+
+        let mut state = State::new();
+        state.add_vm(VmEntry {
+            name: "ghost-vm".to_string(),
+            repo: "repo".to_string(),
+            branch: "main".to_string(),
+            worktree_path: PathBuf::from("/tmp/wt"),
+            created_at: Utc::now(),
+            last_used: Utc::now(),
+            status: VmStatus::Running,
+            ip: None,
+        });
+
+        let mut store = MockStateStore::new();
+        store.expect_load().returning(move || Ok(state.clone()));
+        store
+            .expect_save()
+            .withf(|s: &State| s.vms.is_empty())
+            .returning(|_| Ok(()));
+
+        let result = run("ghost-vm", &tart, &store).await;
         assert!(result.is_ok());
     }
 }
