@@ -122,8 +122,11 @@ pub async fn provision_vm(
             config.credential_proxy_bind, config.credential_proxy_port
         );
         tracing::info!("credential_proxy enabled — injecting ANTHROPIC_BASE_URL={proxy_url}");
+        // The proxy doubles as a general-purpose HTTP/HTTPS forward proxy,
+        // so tools like curl, apt, and npm can reach the internet even when
+        // the macOS Application Firewall blocks direct VM traffic.
         let profile = format!(
-            "export ANTHROPIC_BASE_URL='{proxy_url}'\nexport ANTHROPIC_API_KEY='tachikoma-proxy'\n"
+            "export ANTHROPIC_BASE_URL='{proxy_url}'\nexport ANTHROPIC_API_KEY='tachikoma-proxy'\nexport HTTP_PROXY='{proxy_url}'\nexport HTTPS_PROXY='{proxy_url}'\nexport http_proxy='{proxy_url}'\nexport https_proxy='{proxy_url}'\nexport NO_PROXY='localhost,127.0.0.1'\nexport no_proxy='localhost,127.0.0.1'\n"
         );
         inject_profile_line(tart, vm_name, &profile)
             .await
@@ -290,11 +293,13 @@ async fn mount_and_configure_git(tart: &dyn TartRunner, vm_name: &str, branch: &
 
 /// Install Claude Code in the VM and replicate host settings.
 pub(crate) async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Result<()> {
-    // Install Claude (script requires bash, not dash/sh)
+    // Source ~/.profile first so HTTP_PROXY/HTTPS_PROXY are available
+    // (tart exec doesn't run a login shell, so env vars from provisioning
+    // steps aren't visible unless we explicitly source the profile).
     tart_exec(
         tart,
         vm_name,
-        "curl -fsSL https://claude.ai/install.sh | bash",
+        "source ~/.profile 2>/dev/null; curl -fsSL https://claude.ai/install.sh | bash",
     )
     .await
     .map_err(|e| crate::TachikomaError::Provision(format!("Failed to install Claude: {e}")))?;
@@ -302,7 +307,13 @@ pub(crate) async fn install_claude(tart: &dyn TartRunner, vm_name: &str) -> Resu
     // Verify installation and complete first-run initialization.
     // Running a non-interactive command creates Claude's runtime state files
     // so the interactive TUI doesn't show a first-run/login screen.
-    match tart_exec(tart, vm_name, "~/.local/bin/claude --version").await {
+    match tart_exec(
+        tart,
+        vm_name,
+        "source ~/.profile 2>/dev/null; ~/.local/bin/claude --version",
+    )
+    .await
+    {
         Ok(version) => tracing::info!("Claude installed: {}", version.trim()),
         Err(e) => tracing::warn!("Claude install verification failed: {e}"),
     }

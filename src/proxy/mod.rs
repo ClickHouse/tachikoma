@@ -75,7 +75,12 @@ pub async fn start_proxy(config: ProxyConfig) -> crate::Result<()> {
                 server::handle_request(req, cache, client)
             });
 
-            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
+            let conn = http1::Builder::new()
+                .preserve_header_case(true)
+                .serve_connection(io, svc)
+                .with_upgrades();
+
+            if let Err(e) = conn.await {
                 tracing::debug!("Proxy connection closed: {e}");
             }
         });
